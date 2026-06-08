@@ -6,6 +6,10 @@ param(
     [string]$Model = "large-v3",
     [ValidateSet("auto", "whisperx", "mlx")]
     [string]$AsrBackend = "auto",
+    [ValidateSet("auto", "cpu", "cuda")]
+    [string]$Device = "auto",
+    [ValidateSet("auto", "int8", "int8_float16", "float32", "float16")]
+    [string]$ComputeType = "auto",
     [int]$Threads = 0,
     [switch]$NoDiarization
 )
@@ -26,6 +30,8 @@ $params = @{
     Audio = $audio.FullName
     Model = $Model
     AsrBackend = $AsrBackend
+    Device = $Device
+    ComputeType = $ComputeType
     Threads = $Threads
 }
 

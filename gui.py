@@ -235,7 +235,7 @@ class TranscriptionWindow(QMainWindow):
         self.device = QComboBox()
         self.device.addItems(["auto", "cpu", "cuda"])
         self.compute_type = QComboBox()
-        self.compute_type.addItems(["auto", "int8", "float32", "float16"])
+        self.compute_type.addItems(["auto", "int8", "int8_float16", "float32", "float16"])
         for widget in (self.model, self.asr_backend, self.batch_size, self.threads, self.device, self.compute_type):
             if hasattr(widget, "currentIndexChanged"):
                 widget.currentIndexChanged.connect(self._refresh_state)
