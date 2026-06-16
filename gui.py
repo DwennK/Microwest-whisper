@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key
-from PySide6.QtCore import QProcess, QProcessEnvironment, QSettings, QTimer
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QTimer
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QIcon, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -211,43 +211,70 @@ class TranscriptionWindow(QMainWindow):
 
         transcription_group = QGroupBox("Options")
         transcription_form_layout = QVBoxLayout(transcription_group)
-        simple_form = QFormLayout()
+        options_grid = QGridLayout()
+        options_grid.setColumnMinimumWidth(0, 145)
+        options_grid.setColumnStretch(1, 1)
+        options_grid.setColumnStretch(2, 1)
+        options_grid.setHorizontalSpacing(12)
+        options_grid.setVerticalSpacing(10)
         self.preset = QComboBox()
         self.preset.addItems(PRESET_LABELS)
+        self.preset.setMinimumWidth(380)
         self.preset.currentIndexChanged.connect(self._apply_preset)
-        simple_form.addRow("Profil", self.preset)
+        profile_label = QLabel("Profil")
+        profile_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        options_grid.addWidget(profile_label, 0, 0)
+        options_grid.addWidget(self.preset, 0, 1, 1, 2)
 
         self.preset_description = QLabel("")
         self.preset_description.setObjectName("Muted")
         self.preset_description.setWordWrap(True)
-        simple_form.addRow("", self.preset_description)
+        options_grid.addWidget(self.preset_description, 1, 1, 1, 2)
 
         self.diarization = QCheckBox("Separer les personnes")
         self.diarization.setChecked(True)
         self.diarization.stateChanged.connect(self._refresh_state)
-        simple_form.addRow("", self.diarization)
+        options_grid.addWidget(self.diarization, 2, 1, 1, 2)
 
         self.speaker_mode = QComboBox()
         self.speaker_mode.addItems(["Auto", "Nombre exact", "Fourchette"])
+        self.speaker_mode.setMinimumWidth(220)
         self.speaker_mode.currentIndexChanged.connect(self._refresh_state)
         self.speaker_mode_label = QLabel("Locuteurs")
-        simple_form.addRow(self.speaker_mode_label, self.speaker_mode)
+        self.speaker_mode_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        options_grid.addWidget(self.speaker_mode_label, 3, 0)
+        options_grid.addWidget(self.speaker_mode, 3, 1)
         self.speakers = QSpinBox()
         self.speakers.setRange(1, 20)
         self.speakers.setValue(3)
         self.speakers_label = QLabel("Exact")
-        simple_form.addRow(self.speakers_label, self.speakers)
+        self.speakers_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        options_grid.addWidget(self.speakers_label, 4, 0)
+        options_grid.addWidget(self.speakers, 4, 1)
         self.min_speakers = QSpinBox()
         self.min_speakers.setRange(1, 20)
         self.min_speakers.setValue(2)
         self.min_speakers_label = QLabel("Minimum")
-        simple_form.addRow(self.min_speakers_label, self.min_speakers)
+        self.min_speakers_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        options_grid.addWidget(self.min_speakers_label, 5, 0)
+        options_grid.addWidget(self.min_speakers, 5, 1)
         self.max_speakers = QSpinBox()
         self.max_speakers.setRange(1, 20)
         self.max_speakers.setValue(5)
         self.max_speakers_label = QLabel("Maximum")
-        simple_form.addRow(self.max_speakers_label, self.max_speakers)
-        transcription_form_layout.addLayout(simple_form)
+        self.max_speakers_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        options_grid.addWidget(self.max_speakers_label, 6, 0)
+        options_grid.addWidget(self.max_speakers, 6, 1)
+
+        self.speaker_names = QLineEdit()
+        self.speaker_names.setPlaceholderText("SPEAKER_00=Alice,SPEAKER_01=Bruno")
+        self.speaker_names.setMinimumWidth(420)
+        self.speaker_names.textChanged.connect(self._refresh_state)
+        speaker_names_label = QLabel("Noms locuteurs")
+        speaker_names_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        options_grid.addWidget(speaker_names_label, 7, 0)
+        options_grid.addWidget(self.speaker_names, 7, 1, 1, 2)
+        transcription_form_layout.addLayout(options_grid)
 
         self.advanced_toggle = QCheckBox("Afficher les reglages avances")
         self.advanced_toggle.stateChanged.connect(self._toggle_advanced)
@@ -306,12 +333,6 @@ class TranscriptionWindow(QMainWindow):
         self.advanced_group.setVisible(False)
         transcription_form_layout.addWidget(self.advanced_group)
 
-        names_form = QFormLayout()
-        self.speaker_names = QLineEdit()
-        self.speaker_names.setPlaceholderText("SPEAKER_00=Alice,SPEAKER_01=Bruno")
-        self.speaker_names.textChanged.connect(self._refresh_state)
-        names_form.addRow("Noms locuteurs", self.speaker_names)
-        transcription_form_layout.addLayout(names_form)
         transcription_layout.addWidget(transcription_group)
 
         preflight_group = QGroupBox("Verification avant lancement")
@@ -589,6 +610,12 @@ class TranscriptionWindow(QMainWindow):
                 border-radius: 5px;
                 padding: 6px;
                 background: #ffffff;
+            }
+            QComboBox, QSpinBox {
+                min-height: 28px;
+            }
+            QComboBox {
+                padding-right: 26px;
             }
             QPushButton {
                 border: 1px solid #b8c0cc;
