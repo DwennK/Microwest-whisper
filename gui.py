@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values, set_key
 from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QSettings, QTimer
-from PySide6.QtGui import QAction, QDesktopServices, QFont, QIcon, QTextCursor
+from PySide6.QtGui import QDesktopServices, QFont, QIcon, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStatusBar,
     QTabWidget,
@@ -49,30 +51,34 @@ ENV_PATH = ROOT / ".env"
 TRANSCRIBE = ROOT / "transcribe.py"
 AUDIO_PATTERNS = " ".join(f"*{suffix}" for suffix in sorted(SUPPORTED_AUDIO_EXTENSIONS))
 AUDIO_FILTER = f"Audio ({AUDIO_PATTERNS});;Tous les fichiers (*.*)"
-PRESET_QUALITY = "Qualite max (large-v3)"
+PRESET_QUALITY = "Qualité max (large-v3)"
 PRESET_AUTO = "Auto machine"
 PRESET_FAST = "Rapide (large-v3-turbo)"
-PRESET_CPU = "CPU leger (medium + int8)"
+PRESET_CPU = "CPU léger (medium + int8)"
 PRESET_NO_SPEAKERS = "Sans locuteurs (large-v3, no diarization)"
 PRESET_LABELS = [PRESET_QUALITY, PRESET_AUTO, PRESET_FAST, PRESET_CPU, PRESET_NO_SPEAKERS]
 PRESET_DESCRIPTIONS = {
-    PRESET_QUALITY: "Le meilleur choix par defaut: precision prioritaire, plus lent sur CPU.",
-    PRESET_AUTO: "Detecte la machine et choisit un profil prudent automatiquement.",
-    PRESET_FAST: "Plus rapide, avec une petite concession possible sur la qualite.",
-    PRESET_CPU: "Profil prudent pour une machine sans GPU ou avec peu de memoire.",
-    PRESET_NO_SPEAKERS: "Transcrit seulement le texte: pas de token HF, pas de separation par personne.",
+    PRESET_QUALITY: "Le meilleur choix par défaut: précision prioritaire, plus lent sur CPU.",
+    PRESET_AUTO: "Détecte la machine et choisit un profil prudent automatiquement.",
+    PRESET_FAST: "Plus rapide, avec une petite concession possible sur la qualité.",
+    PRESET_CPU: "Profil prudent pour une machine sans GPU ou avec peu de mémoire.",
+    PRESET_NO_SPEAKERS: "Transcrit seulement le texte: pas de token HF, pas de séparation par personne.",
 }
 
 LANGUAGES = {
-    "Francais": "fr",
+    "Français": "fr",
     "Anglais": "en",
     "Auto": "auto",
 }
 OLD_PRESET_NAMES = {
     "Meilleure qualite": PRESET_QUALITY,
+    "Meilleure qualité": PRESET_QUALITY,
+    "Qualite max (large-v3)": PRESET_QUALITY,
     "Rapide": PRESET_FAST,
     "CPU prudent": PRESET_CPU,
+    "CPU leger (medium + int8)": PRESET_CPU,
     "Sans separation": PRESET_NO_SPEAKERS,
+    "Sans séparation": PRESET_NO_SPEAKERS,
 }
 
 
@@ -109,8 +115,8 @@ class TranscriptionWindow(QMainWindow):
         OUTPUT_DIR.mkdir(exist_ok=True)
         WORK_DIR.mkdir(exist_ok=True)
 
-        self.setWindowTitle("Transcription WhisperX")
-        self.setMinimumSize(980, 720)
+        self.setWindowTitle("Microwest Whisper")
+        self.setMinimumSize(1080, 760)
         self.setAcceptDrops(True)
         self.elapsed_timer = QTimer(self)
         self.elapsed_timer.timeout.connect(self._tick_elapsed)
@@ -122,30 +128,40 @@ class TranscriptionWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(14)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        header = QHBoxLayout()
+        app_bar = QFrame()
+        app_bar.setObjectName("AppBar")
+        header = QHBoxLayout(app_bar)
+        header.setContentsMargins(22, 16, 22, 16)
+        header.setSpacing(14)
+
+        brand_mark = QLabel("MW")
+        brand_mark.setObjectName("BrandMark")
+        brand_mark.setAlignment(Qt.AlignCenter)
+        header.addWidget(brand_mark)
+
         title_wrap = QVBoxLayout()
-        title = QLabel("Transcription WhisperX")
-        title_font = QFont()
-        title_font.setPointSize(18)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        subtitle = QLabel("Audio francais, diarisation et exports propres en local.")
-        subtitle.setObjectName("Muted")
+        title_wrap.setSpacing(2)
+        title = QLabel("Microwest Whisper")
+        title.setObjectName("AppTitle")
+        subtitle = QLabel("Transcription locale, diarisation et exports prêts à livrer.")
+        subtitle.setObjectName("AppSubtitle")
         title_wrap.addWidget(title)
         title_wrap.addWidget(subtitle)
         header.addLayout(title_wrap)
         header.addStretch(1)
 
-        self.open_input_btn = QPushButton("Ouvrir input")
+        self.open_input_btn = QPushButton("Input")
+        self.open_input_btn.setObjectName("CommandButton")
         self.open_input_btn.clicked.connect(lambda: self.open_folder(INPUT_DIR))
         header.addWidget(self.open_input_btn)
-        self.open_output_btn = QPushButton("Ouvrir output")
+        self.open_output_btn = QPushButton("Output")
+        self.open_output_btn.setObjectName("CommandButton")
         self.open_output_btn.clicked.connect(self.open_output)
         header.addWidget(self.open_output_btn)
-        root.addLayout(header)
+        root.addWidget(app_bar)
 
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.North)
@@ -156,23 +172,24 @@ class TranscriptionWindow(QMainWindow):
         audio_layout.setContentsMargins(18, 18, 18, 18)
         audio_layout.setSpacing(16)
 
-        audio_title = QLabel("1. Choisir l'audio")
-        audio_title.setObjectName("ScreenTitle")
-        audio_layout.addWidget(audio_title)
+        self._add_page_header(
+            audio_layout,
+            "Étape 1",
+            "Choisir l'audio",
+            "Sélectionne un fichier source ou prends automatiquement le plus récent dans input.",
+        )
 
-        audio_intro = QLabel("Selectionne un fichier source ou prends automatiquement le plus recent dans input.")
-        audio_intro.setObjectName("Muted")
-        audio_layout.addWidget(audio_intro)
-
-        file_group = QGroupBox("Audio")
+        file_group = QGroupBox("Source audio")
         file_layout = QGridLayout(file_group)
+        file_layout.setHorizontalSpacing(12)
+        file_layout.setVerticalSpacing(10)
         file_layout.setColumnStretch(1, 1)
 
         self.audio_path = QLineEdit()
         self.audio_path.setPlaceholderText(r"C:\...\enregistrement.m4a")
         self.audio_path.textChanged.connect(self._refresh_state)
 
-        browse_btn = QPushButton("Choisir...")
+        browse_btn = QPushButton("Parcourir")
         browse_btn.clicked.connect(self.choose_file)
         latest_btn = QPushButton("Dernier dans input")
         latest_btn.clicked.connect(self.use_latest_input)
@@ -181,7 +198,7 @@ class TranscriptionWindow(QMainWindow):
         file_layout.addWidget(self.audio_path, 0, 1)
         file_layout.addWidget(browse_btn, 0, 2)
         file_layout.addWidget(latest_btn, 0, 3)
-        file_hint = QLabel("Astuce: tu peux aussi glisser-deposer un fichier audio dans la fenetre.")
+        file_hint = QLabel("Astuce: tu peux aussi glisser-déposer un fichier audio dans la fenêtre.")
         file_hint.setObjectName("Muted")
         file_layout.addWidget(file_hint, 1, 1, 1, 3)
         audio_layout.addWidget(file_group)
@@ -189,98 +206,117 @@ class TranscriptionWindow(QMainWindow):
 
         audio_actions = QHBoxLayout()
         audio_actions.addStretch(1)
-        self.next_audio_btn = QPushButton("Suivant")
+        self.next_audio_btn = QPushButton("Continuer vers les réglages")
         self.next_audio_btn.setObjectName("Primary")
         self.next_audio_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
         audio_actions.addWidget(self.next_audio_btn)
         audio_layout.addLayout(audio_actions)
-        self.tabs.addTab(audio_screen, "Audio")
+        self._add_scroll_tab(audio_screen, "Audio")
 
         transcription_screen = QWidget()
         transcription_layout = QVBoxLayout(transcription_screen)
         transcription_layout.setContentsMargins(18, 18, 18, 18)
         transcription_layout.setSpacing(16)
 
-        transcription_title = QLabel("2. Regler la transcription")
-        transcription_title.setObjectName("ScreenTitle")
-        transcription_layout.addWidget(transcription_title)
+        self._add_page_header(
+            transcription_layout,
+            "Étape 2",
+            "Régler la transcription",
+            "Choisis le profil, la diarisation et les contrôles utiles avant de lancer.",
+        )
 
         self.settings_hint = QLabel("")
         self.settings_hint.setObjectName("Warning")
+        self.settings_hint.setWordWrap(True)
+        self.settings_hint.setVisible(False)
         transcription_layout.addWidget(self.settings_hint)
 
-        transcription_group = QGroupBox("Options")
+        transcription_group = QGroupBox("Options de transcription")
+        transcription_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         transcription_form_layout = QVBoxLayout(transcription_group)
-        options_grid = QGridLayout()
-        options_grid.setColumnMinimumWidth(0, 145)
-        options_grid.setColumnStretch(1, 1)
-        options_grid.setColumnStretch(2, 1)
-        options_grid.setHorizontalSpacing(12)
-        options_grid.setVerticalSpacing(10)
+        transcription_form_layout.setSpacing(8)
+
+        profile_label = QLabel("Profil")
+        profile_label.setObjectName("FieldLabel")
         self.preset = QComboBox()
         self.preset.addItems(PRESET_LABELS)
         self.preset.setMinimumWidth(380)
         self.preset.currentIndexChanged.connect(self._apply_preset)
-        profile_label = QLabel("Profil")
-        profile_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        options_grid.addWidget(profile_label, 0, 0)
-        options_grid.addWidget(self.preset, 0, 1, 1, 2)
+        transcription_form_layout.addWidget(profile_label)
+        transcription_form_layout.addWidget(self.preset)
+        transcription_form_layout.addSpacing(8)
 
         self.preset_description = QLabel("")
         self.preset_description.setObjectName("Muted")
         self.preset_description.setWordWrap(True)
-        options_grid.addWidget(self.preset_description, 1, 1, 1, 2)
+        transcription_form_layout.addWidget(self.preset_description)
+        transcription_form_layout.addSpacing(4)
 
-        self.diarization = QCheckBox("Separer les personnes")
+        self.diarization = QCheckBox("Séparer les personnes")
         self.diarization.setChecked(True)
         self.diarization.stateChanged.connect(self._refresh_state)
-        options_grid.addWidget(self.diarization, 2, 1, 1, 2)
+        transcription_form_layout.addWidget(self.diarization)
+        transcription_form_layout.addSpacing(6)
 
         self.speaker_mode = QComboBox()
         self.speaker_mode.addItems(["Auto", "Nombre exact", "Fourchette"])
         self.speaker_mode.setMinimumWidth(220)
         self.speaker_mode.currentIndexChanged.connect(self._refresh_state)
         self.speaker_mode_label = QLabel("Locuteurs")
-        self.speaker_mode_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        options_grid.addWidget(self.speaker_mode_label, 3, 0)
-        options_grid.addWidget(self.speaker_mode, 3, 1)
+        self.speaker_mode_label.setObjectName("FieldLabel")
+        transcription_form_layout.addWidget(self.speaker_mode_label)
+        transcription_form_layout.addWidget(self.speaker_mode)
+        transcription_form_layout.addSpacing(8)
+
         self.speakers = QSpinBox()
         self.speakers.setRange(1, 20)
         self.speakers.setValue(3)
         self.speakers_label = QLabel("Exact")
-        self.speakers_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        options_grid.addWidget(self.speakers_label, 4, 0)
-        options_grid.addWidget(self.speakers, 4, 1)
+        self.speakers_label.setObjectName("FieldLabel")
+        transcription_form_layout.addWidget(self.speakers_label)
+        transcription_form_layout.addWidget(self.speakers)
+
         self.min_speakers = QSpinBox()
         self.min_speakers.setRange(1, 20)
         self.min_speakers.setValue(2)
         self.min_speakers_label = QLabel("Minimum")
-        self.min_speakers_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        options_grid.addWidget(self.min_speakers_label, 5, 0)
-        options_grid.addWidget(self.min_speakers, 5, 1)
+        self.min_speakers_label.setObjectName("FieldLabel")
+        transcription_form_layout.addWidget(self.min_speakers_label)
+        transcription_form_layout.addWidget(self.min_speakers)
+
         self.max_speakers = QSpinBox()
         self.max_speakers.setRange(1, 20)
         self.max_speakers.setValue(5)
         self.max_speakers_label = QLabel("Maximum")
-        self.max_speakers_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        options_grid.addWidget(self.max_speakers_label, 6, 0)
-        options_grid.addWidget(self.max_speakers, 6, 1)
+        self.max_speakers_label.setObjectName("FieldLabel")
+        transcription_form_layout.addWidget(self.max_speakers_label)
+        transcription_form_layout.addWidget(self.max_speakers)
 
         self.speaker_names = QLineEdit()
         self.speaker_names.setPlaceholderText("SPEAKER_00=Alice,SPEAKER_01=Bruno")
         self.speaker_names.setMinimumWidth(420)
         self.speaker_names.textChanged.connect(self._refresh_state)
         speaker_names_label = QLabel("Noms locuteurs")
-        speaker_names_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        options_grid.addWidget(speaker_names_label, 7, 0)
-        options_grid.addWidget(self.speaker_names, 7, 1, 1, 2)
-        transcription_form_layout.addLayout(options_grid)
+        speaker_names_label.setObjectName("FieldLabel")
+        transcription_form_layout.addWidget(speaker_names_label)
+        transcription_form_layout.addWidget(self.speaker_names)
+        transcription_form_layout.addSpacing(8)
+        for field in (
+            self.preset,
+            self.speaker_mode,
+            self.speakers,
+            self.min_speakers,
+            self.max_speakers,
+            self.speaker_names,
+        ):
+            field.setMinimumHeight(32)
+        transcription_form_layout.addSpacing(8)
 
-        self.advanced_toggle = QCheckBox("Afficher les reglages avances")
+        self.advanced_toggle = QCheckBox("Afficher les réglages avancés")
         self.advanced_toggle.stateChanged.connect(self._toggle_advanced)
         transcription_form_layout.addWidget(self.advanced_toggle)
 
-        self.advanced_group = QGroupBox("Reglages avances")
+        self.advanced_group = QGroupBox("Réglages avancés")
         quality_form = QFormLayout(self.advanced_group)
         self.model = QComboBox()
         self.model.addItems(["large-v3", "medium", "small", "large-v3-turbo"])
@@ -291,8 +327,8 @@ class TranscriptionWindow(QMainWindow):
         self.asr_backend.addItems(["auto", "whisperx", "mlx"])
         self.audio_filter = QComboBox()
         self.audio_filter.addItems(["loudnorm", "voice-clean", "none"])
-        self.trim_silence = QCheckBox("Rogner les silences au debut et a la fin")
-        self.force_recompute = QCheckBox("Recalculer sans reutiliser les checkpoints")
+        self.trim_silence = QCheckBox("Rogner les silences au début et à la fin")
+        self.force_recompute = QCheckBox("Recalculer sans réutiliser les checkpoints")
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 32)
         self.batch_size.setValue(8)
@@ -320,7 +356,7 @@ class TranscriptionWindow(QMainWindow):
                 widget.valueChanged.connect(self._refresh_state)
         self.trim_silence.stateChanged.connect(self._refresh_state)
         self.force_recompute.stateChanged.connect(self._refresh_state)
-        quality_form.addRow("Modele", self.model)
+        quality_form.addRow("Modèle", self.model)
         quality_form.addRow("Langue", self.language)
         quality_form.addRow("Backend", self.asr_backend)
         quality_form.addRow("Filtre audio", self.audio_filter)
@@ -331,35 +367,39 @@ class TranscriptionWindow(QMainWindow):
         quality_form.addRow("Device", self.device)
         quality_form.addRow("Calcul", self.compute_type)
         self.advanced_group.setVisible(False)
-        transcription_form_layout.addWidget(self.advanced_group)
 
-        transcription_layout.addWidget(transcription_group)
-
-        preflight_group = QGroupBox("Verification avant lancement")
+        preflight_group = QGroupBox("Contrôle avant lancement")
+        preflight_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         preflight_layout = QVBoxLayout(preflight_group)
-        self.preflight_summary = QLabel("Backend recommande: " + self.recommended_backend_label())
+        self.preflight_summary = QLabel("Backend recommandé: " + self.recommended_backend_label())
         self.preflight_summary.setObjectName("Stage")
         preflight_layout.addWidget(self.preflight_summary)
         self.preflight_output = QTextEdit()
+        self.preflight_output.setObjectName("Preflight")
         self.preflight_output.setReadOnly(True)
         self.preflight_output.setMaximumHeight(130)
-        self.preflight_output.setPlainText("Lance une verification pour controler .venv, FFmpeg, WhisperX et le token si necessaire.")
+        self.preflight_output.setPlainText("Lance une vérification pour contrôler .venv, FFmpeg, WhisperX et le token si nécessaire.")
         preflight_layout.addWidget(self.preflight_output)
         preflight_actions = QHBoxLayout()
-        self.preflight_btn = QPushButton("Verifier configuration")
+        self.preflight_btn = QPushButton("Vérifier la configuration")
         self.preflight_btn.clicked.connect(self.run_preflight)
         preflight_actions.addWidget(self.preflight_btn)
         preflight_actions.addStretch(1)
         preflight_layout.addLayout(preflight_actions)
-        transcription_layout.addWidget(preflight_group)
-        transcription_layout.addStretch(1)
+
+        transcription_workspace = QHBoxLayout()
+        transcription_workspace.setSpacing(16)
+        transcription_workspace.addWidget(transcription_group, 3, Qt.AlignTop)
+        transcription_workspace.addWidget(preflight_group, 2, Qt.AlignTop)
+        transcription_layout.addLayout(transcription_workspace)
+        transcription_layout.addWidget(self.advanced_group)
 
         transcription_actions = QHBoxLayout()
         back_to_audio = QPushButton("Retour")
         back_to_audio.clicked.connect(lambda: self.tabs.setCurrentIndex(0))
-        self.settings_shortcut_btn = QPushButton("Settings")
+        self.settings_shortcut_btn = QPushButton("Paramètres")
         self.settings_shortcut_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(4))
-        self.next_transcription_btn = QPushButton("Suivant")
+        self.next_transcription_btn = QPushButton("Continuer vers l'exécution")
         self.next_transcription_btn.setObjectName("Primary")
         self.next_transcription_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
         transcription_actions.addWidget(back_to_audio)
@@ -367,31 +407,37 @@ class TranscriptionWindow(QMainWindow):
         transcription_actions.addWidget(self.settings_shortcut_btn)
         transcription_actions.addWidget(self.next_transcription_btn)
         transcription_layout.addLayout(transcription_actions)
-        self.tabs.addTab(transcription_screen, "Transcription")
+        self._add_scroll_tab(transcription_screen, "Réglages")
 
         execution_screen = QWidget()
         execution_layout = QVBoxLayout(execution_screen)
         execution_layout.setContentsMargins(18, 18, 18, 18)
         execution_layout.setSpacing(14)
 
-        execution_title = QLabel("3. Lancer et suivre")
-        execution_title.setObjectName("ScreenTitle")
-        execution_layout.addWidget(execution_title)
+        self._add_page_header(
+            execution_layout,
+            "Étape 3",
+            "Lancer et suivre",
+            "Démarre le traitement et garde les logs visibles pendant toute l'exécution.",
+        )
 
         self.execution_hint = QLabel("")
         self.execution_hint.setObjectName("Warning")
+        self.execution_hint.setWordWrap(True)
+        self.execution_hint.setVisible(False)
         execution_layout.addWidget(self.execution_hint)
 
         actions = QHBoxLayout()
-        self.start_btn = QPushButton("Lancer")
+        self.start_btn = QPushButton("Lancer la transcription")
         self.start_btn.setObjectName("Primary")
         self.start_btn.clicked.connect(self.start_transcription)
-        self.stop_btn = QPushButton("Arreter")
+        self.stop_btn = QPushButton("Arrêter")
         self.stop_btn.clicked.connect(self.stop_transcription)
         self.stop_btn.setEnabled(False)
         self.command_toggle = QPushButton("Afficher la commande")
         self.command_toggle.clicked.connect(self._toggle_command_preview)
         self.command_preview = QLineEdit()
+        self.command_preview.setObjectName("CommandPreview")
         self.command_preview.setReadOnly(True)
         self.command_preview.setVisible(False)
         actions.addWidget(self.start_btn)
@@ -401,23 +447,24 @@ class TranscriptionWindow(QMainWindow):
         execution_layout.addLayout(actions)
         execution_layout.addWidget(self.command_preview)
 
-        progress_group = QGroupBox("Execution")
+        progress_group = QGroupBox("État du traitement")
         progress_layout = QGridLayout(progress_group)
         progress_layout.setColumnStretch(1, 1)
-        self.stage_label = QLabel("Pret.")
+        self.stage_label = QLabel("Prêt.")
         self.stage_label.setObjectName("Stage")
         self.elapsed_label = QLabel("00:00")
         self.elapsed_label.setObjectName("Muted")
         self.progress = QProgressBar()
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
-        progress_layout.addWidget(QLabel("Etat"), 0, 0)
+        progress_layout.addWidget(QLabel("État"), 0, 0)
         progress_layout.addWidget(self.stage_label, 0, 1)
         progress_layout.addWidget(self.elapsed_label, 0, 2)
         progress_layout.addWidget(self.progress, 1, 0, 1, 3)
         execution_layout.addWidget(progress_group)
 
         self.log = QTextEdit()
+        self.log.setObjectName("Console")
         self.log.setReadOnly(True)
         self.log.setLineWrapMode(QTextEdit.NoWrap)
         font = QFont("Consolas")
@@ -429,59 +476,63 @@ class TranscriptionWindow(QMainWindow):
         execution_nav = QHBoxLayout()
         back_to_transcription = QPushButton("Retour")
         back_to_transcription.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
-        go_to_results = QPushButton("Resultats")
+        go_to_results = QPushButton("Résultats")
         go_to_results.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
         execution_nav.addWidget(back_to_transcription)
         execution_nav.addStretch(1)
         execution_nav.addWidget(go_to_results)
         execution_layout.addLayout(execution_nav)
-        self.tabs.addTab(execution_screen, "Execution")
+        self._add_scroll_tab(execution_screen, "Exécution")
 
         results_screen = QWidget()
         results_screen_layout = QVBoxLayout(results_screen)
         results_screen_layout.setContentsMargins(18, 18, 18, 18)
         results_screen_layout.setSpacing(16)
 
-        results_title = QLabel("4. Recuperer les resultats")
-        results_title.setObjectName("ScreenTitle")
-        results_screen_layout.addWidget(results_title)
+        self._add_page_header(
+            results_screen_layout,
+            "Étape 4",
+            "Récupérer les résultats",
+            "Relis, renomme les locuteurs et ouvre directement les exports de livraison.",
+        )
 
         workspace = QHBoxLayout()
         workspace.setSpacing(14)
 
-        preview_group = QGroupBox("Apercu")
+        preview_group = QGroupBox("Aperçu de transcription")
         preview_layout = QVBoxLayout(preview_group)
         self.preview_text = QTextEdit()
+        self.preview_text.setObjectName("Preview")
         self.preview_text.setReadOnly(True)
-        self.preview_text.setPlaceholderText("La transcription lisible apparaitra ici apres execution.")
+        self.preview_text.setPlaceholderText("La transcription lisible apparaîtra ici après exécution.")
         preview_layout.addWidget(self.preview_text)
         workspace.addWidget(preview_group, 2)
 
         side_panel = QVBoxLayout()
         speakers_group = QGroupBox("Locuteurs")
         self.speakers_layout = QVBoxLayout(speakers_group)
-        self.speakers_empty = QLabel("Aucun locuteur detecte.")
+        self.speakers_empty = QLabel("Aucun locuteur détecté.")
         self.speakers_empty.setObjectName("Muted")
         self.speakers_layout.addWidget(self.speakers_empty)
-        self.regenerate_btn = QPushButton("Regenerer les fichiers")
+        self.regenerate_btn = QPushButton("Régénérer les exports")
         self.regenerate_btn.setObjectName("Primary")
         self.regenerate_btn.clicked.connect(self.regenerate_outputs)
         self.regenerate_btn.setEnabled(False)
         self.speakers_layout.addWidget(self.regenerate_btn)
         side_panel.addWidget(speakers_group)
 
-        quick_files_group = QGroupBox("Acces rapide")
+        quick_files_group = QGroupBox("Exports prioritaires")
         self.quick_files_layout = QVBoxLayout(quick_files_group)
-        self.quick_files_empty = QLabel("Aucun fichier prioritaire trouve.")
+        self.quick_files_empty = QLabel("Aucun export prioritaire trouvé.")
         self.quick_files_empty.setObjectName("Muted")
         self.quick_files_layout.addWidget(self.quick_files_empty)
         side_panel.addWidget(quick_files_group)
         workspace.addLayout(side_panel, 1)
         results_screen_layout.addLayout(workspace, 1)
 
-        results_group = QGroupBox("Fichiers")
+        results_group = QGroupBox("Tous les fichiers générés")
         self.results_layout = QVBoxLayout(results_group)
-        self.results_empty = QLabel("Aucun resultat pour l'instant.")
+        self.results_empty = QLabel("Aucun résultat pour l'instant.")
         self.results_empty.setObjectName("Muted")
         self.results_layout.addWidget(self.results_empty)
         results_screen_layout.addWidget(results_group)
@@ -489,16 +540,19 @@ class TranscriptionWindow(QMainWindow):
         history_group = QGroupBox("Historique")
         history_layout = QVBoxLayout(history_group)
         self.history_table = QTableWidget(0, 7)
-        self.history_table.setHorizontalHeaderLabels(["Date", "Audio", "Statut", "Langue", "Modele", "Duree", "Actions"])
+        self.history_table.setHorizontalHeaderLabels(["Date", "Audio", "Statut", "Langue", "Modèle", "Durée", "Actions"])
         self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.history_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.history_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.history_table.setAlternatingRowColors(True)
+        self.history_table.setShowGrid(False)
+        self.history_table.horizontalHeader().setHighlightSections(False)
         self.history_table.setMaximumHeight(260)
         history_layout.addWidget(self.history_table)
-        refresh_history_btn = QPushButton("Rafraichir l'historique")
+        refresh_history_btn = QPushButton("Rafraîchir")
         refresh_history_btn.clicked.connect(self.refresh_history)
         history_layout.addWidget(refresh_history_btn)
         results_screen_layout.addWidget(history_group)
@@ -506,22 +560,25 @@ class TranscriptionWindow(QMainWindow):
         results_actions = QHBoxLayout()
         new_audio_btn = QPushButton("Nouvelle transcription")
         new_audio_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(0))
-        open_output_btn = QPushButton("Ouvrir output")
+        open_output_btn = QPushButton("Ouvrir le dossier output")
         open_output_btn.clicked.connect(self.open_output)
         results_actions.addWidget(new_audio_btn)
         results_actions.addStretch(1)
         results_actions.addWidget(open_output_btn)
         results_screen_layout.addLayout(results_actions)
-        self.tabs.addTab(results_screen, "Resultats")
+        self._add_scroll_tab(results_screen, "Résultats")
 
         settings_screen = QWidget()
         settings_layout = QVBoxLayout(settings_screen)
         settings_layout.setContentsMargins(18, 18, 18, 18)
         settings_layout.setSpacing(16)
 
-        settings_title = QLabel("Settings")
-        settings_title.setObjectName("ScreenTitle")
-        settings_layout.addWidget(settings_title)
+        self._add_page_header(
+            settings_layout,
+            "Paramètres",
+            "Hugging Face",
+            "Ajoute un token uniquement si la séparation des locuteurs est activée.",
+        )
 
         token_group = QGroupBox("Hugging Face")
         token_form = QFormLayout(token_group)
@@ -538,7 +595,7 @@ class TranscriptionWindow(QMainWindow):
         token_form.addRow("", self.save_token)
         token_form.addRow("", self.show_token)
         token_form.addRow("", self.check_token_btn)
-        token_hint = QLabel("Necessaire uniquement si la separation des personnes est activee.")
+        token_hint = QLabel("Nécessaire uniquement si la séparation des personnes est activée.")
         token_hint.setObjectName("Muted")
         token_form.addRow("", token_hint)
         settings_layout.addWidget(token_group)
@@ -550,101 +607,260 @@ class TranscriptionWindow(QMainWindow):
         settings_actions.addStretch(1)
         settings_actions.addWidget(settings_back_btn)
         settings_layout.addLayout(settings_actions)
-        self.tabs.addTab(settings_screen, "Settings")
+        self._add_scroll_tab(settings_screen, "Paramètres")
 
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
 
-        open_input = QAction("Ouvrir input", self)
-        open_input.triggered.connect(lambda: self.open_folder(INPUT_DIR))
-        self.menuBar().addAction(open_input)
-
         self.setStyleSheet(
             """
-            QMainWindow { background: #f6f7f9; }
-            QLabel#Muted { color: #687386; }
-            QLabel#Stage { font-weight: 600; color: #2f3747; }
-            QLabel#ScreenTitle {
+            QMainWindow { background: #eef2f7; }
+            QMenuBar {
+                background: #ffffff;
+                border-bottom: 1px solid #d8dee8;
                 color: #1f2937;
+            }
+            QFrame#AppBar {
+                background: #0f3b67;
+                border-bottom: 1px solid #092742;
+            }
+            QLabel#BrandMark {
+                min-width: 38px;
+                min-height: 38px;
+                max-width: 38px;
+                max-height: 38px;
+                border: 1px solid rgba(255, 255, 255, 0.45);
+                border-radius: 6px;
+                color: #ffffff;
+                background: #0f6cbd;
+                font-size: 13px;
+                font-weight: 800;
+            }
+            QLabel#AppTitle {
+                color: #ffffff;
                 font-size: 20px;
-                font-weight: 700;
+                font-weight: 800;
+            }
+            QLabel#AppSubtitle {
+                color: #cfe5ff;
+                font-size: 12px;
+            }
+            QLabel#Muted { color: #65758b; }
+            QLabel#Stage { font-weight: 700; color: #263548; }
+            QLabel#FieldLabel {
+                color: #253246;
+                font-weight: 800;
+                margin-top: 2px;
+            }
+            QLabel#PageEyebrow {
+                color: #0f6cbd;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QLabel#ScreenTitle {
+                color: #111827;
+                font-size: 22px;
+                font-weight: 800;
             }
             QLabel#Warning {
-                color: #9a3412;
+                color: #8a3b12;
                 font-weight: 600;
+                background: #fff7ed;
+                border: 1px solid #fed7aa;
+                border-radius: 5px;
+                padding: 8px 10px;
+            }
+            QFrame#PageHeader {
+                background: transparent;
+                border: none;
             }
             QTabWidget::pane {
-                border: 1px solid #d9dde5;
-                border-radius: 6px;
+                border: 1px solid #cfd8e3;
+                border-left: none;
+                border-right: none;
+                border-bottom: none;
                 background: #ffffff;
-                top: -1px;
+                top: -2px;
             }
             QTabBar::tab {
-                border: 1px solid #cfd5df;
+                border: 1px solid #d6dee9;
                 border-bottom: none;
-                padding: 9px 16px;
-                background: #eef1f5;
-                color: #2f3747;
+                padding: 10px 18px;
+                margin-right: 2px;
+                background: #f4f7fb;
+                color: #344256;
             }
             QTabBar::tab:selected {
                 background: #ffffff;
-                color: #235fb4;
-                font-weight: 700;
+                color: #0f6cbd;
+                border-top: 3px solid #0f6cbd;
+                font-weight: 800;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #eaf2fb;
             }
             QGroupBox {
-                border: 1px solid #d9dde5;
-                border-radius: 6px;
-                margin-top: 12px;
-                padding: 12px;
+                border: 1px solid #d7dee8;
+                border-radius: 7px;
+                margin-top: 14px;
+                padding: 15px;
                 background: #ffffff;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-                color: #2f3747;
-                font-weight: 600;
+                left: 12px;
+                padding: 0 6px;
+                color: #263548;
+                font-weight: 800;
             }
-            QLineEdit, QComboBox, QSpinBox, QTextEdit {
-                border: 1px solid #cfd5df;
+            QLineEdit, QTextEdit {
+                border: 1px solid #c9d3df;
                 border-radius: 5px;
-                padding: 6px;
+                padding: 3px 8px;
                 background: #ffffff;
+                color: #172033;
+                selection-background-color: #0f6cbd;
+            }
+            QLineEdit:focus, QTextEdit:focus {
+                border-color: #0f6cbd;
+            }
+            QLineEdit#CommandPreview {
+                background: #f8fafc;
+                color: #334155;
+                font-family: Consolas, Menlo, monospace;
+            }
+            QTextEdit#Console {
+                background: #0f172a;
+                color: #dbeafe;
+                border-color: #1e293b;
+                font-family: Consolas, Menlo, monospace;
+            }
+            QTextEdit#Preflight {
+                background: #f8fafc;
+                color: #334155;
+                border-color: #d7dee8;
+                font-family: Consolas, Menlo, monospace;
+            }
+            QTextEdit#Preview {
+                background: #fbfdff;
+                color: #172033;
+                line-height: 1.35;
             }
             QComboBox, QSpinBox {
-                min-height: 28px;
-            }
-            QComboBox {
-                padding-right: 26px;
+                min-height: 34px;
+                color: #172033;
+                background: #ffffff;
             }
             QPushButton {
-                border: 1px solid #b8c0cc;
+                border: 1px solid #b8c4d3;
                 border-radius: 5px;
-                padding: 7px 12px;
+                padding: 8px 13px;
                 background: #ffffff;
-            }
-            QPushButton:hover { background: #eef3f8; }
-            QPushButton:disabled { color: #8b94a3; background: #eceff3; }
-            QPushButton#Primary {
-                background: #235fb4;
-                color: white;
-                border-color: #235fb4;
+                color: #172033;
                 font-weight: 600;
             }
-            QPushButton#Primary:hover { background: #1d529d; }
-            QProgressBar {
-                border: 1px solid #cfd5df;
-                border-radius: 5px;
-                height: 10px;
+            QPushButton:hover { background: #eef6ff; border-color: #91bde8; }
+            QPushButton:disabled {
+                color: #8c98a8;
+                background: #edf1f6;
+                border-color: #d5dce6;
+            }
+            QPushButton#Primary {
+                background: #0f6cbd;
+                color: white;
+                border-color: #0f6cbd;
+                font-weight: 800;
+            }
+            QPushButton#Primary:hover { background: #0b5da8; }
+            QPushButton#Primary:disabled {
+                background: #d9e1ec;
+                color: #7a8798;
+                border-color: #d1dae6;
+            }
+            QPushButton#CommandButton {
+                background: rgba(255, 255, 255, 0.10);
+                color: #ffffff;
+                border-color: rgba(255, 255, 255, 0.28);
+                min-width: 74px;
+            }
+            QPushButton#CommandButton:hover {
+                background: rgba(255, 255, 255, 0.18);
+                border-color: rgba(255, 255, 255, 0.55);
+            }
+            QCheckBox {
+                spacing: 8px;
+                color: #172033;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #b8c4d3;
+                border-radius: 4px;
                 background: #ffffff;
+            }
+            QCheckBox::indicator:checked {
+                background: #0f6cbd;
+                border-color: #0f6cbd;
+            }
+            QCheckBox::indicator:disabled {
+                background: #e5e9ef;
+                border-color: #d1dae6;
+            }
+            QProgressBar {
+                border: 1px solid #cbd5e1;
+                border-radius: 5px;
+                height: 12px;
+                background: #f8fafc;
                 text-align: center;
             }
             QProgressBar::chunk {
                 border-radius: 4px;
-                background: #235fb4;
+                background: #22a06b;
+            }
+            QTableWidget {
+                gridline-color: #e4eaf2;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #dbeafe;
+                selection-color: #172033;
+            }
+            QHeaderView::section {
+                background: #f3f6fa;
+                color: #344256;
+                border: none;
+                border-bottom: 1px solid #d7dee8;
+                padding: 7px;
+                font-weight: 800;
             }
             """
         )
+
+    def _add_page_header(self, layout: QVBoxLayout, eyebrow: str, title: str, description: str) -> None:
+        header = QFrame()
+        header.setObjectName("PageHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 4)
+        header_layout.setSpacing(3)
+
+        eyebrow_label = QLabel(eyebrow.upper())
+        eyebrow_label.setObjectName("PageEyebrow")
+        title_label = QLabel(title)
+        title_label.setObjectName("ScreenTitle")
+        description_label = QLabel(description)
+        description_label.setObjectName("Muted")
+        description_label.setWordWrap(True)
+
+        header_layout.addWidget(eyebrow_label)
+        header_layout.addWidget(title_label)
+        header_layout.addWidget(description_label)
+        layout.addWidget(header)
+
+    def _add_scroll_tab(self, content: QWidget, title: str) -> None:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        self.tabs.addTab(scroll, title)
 
     def _load_settings(self) -> None:
         env_values = dotenv_values(ENV_PATH) if ENV_PATH.exists() else {}
@@ -654,8 +870,8 @@ class TranscriptionWindow(QMainWindow):
         preset = self._normalize_preset(str(self.settings.value("preset", PRESET_QUALITY)))
         self.preset.setCurrentText(preset)
         self.model.setCurrentText(str(self.settings.value("model", "large-v3")))
-        saved_language = str(self.settings.value("language", "Francais"))
-        self.language.setCurrentText(saved_language if saved_language in LANGUAGES else "Francais")
+        saved_language = str(self.settings.value("language", "Français"))
+        self.language.setCurrentText(saved_language if saved_language in LANGUAGES else "Français")
         self.asr_backend.setCurrentText(str(self.settings.value("asr_backend", "auto")))
         self.audio_filter.setCurrentText(str(self.settings.value("audio_filter", "loudnorm")))
         self.trim_silence.setChecked(str(self.settings.value("trim_silence", "false")).lower() == "true")
@@ -740,29 +956,29 @@ class TranscriptionWindow(QMainWindow):
 
     def recommended_backend_label(self) -> str:
         if platform.system() == "Darwin" and platform.machine() == "arm64":
-            return "MLX sur Apple Silicon si mlx-whisper est installe"
+            return "MLX sur Apple Silicon si mlx-whisper est installé"
         if shutil.which("nvidia-smi"):
             return "CUDA sur GPU NVIDIA"
         return "CPU avec profil prudent"
 
     def run_preflight(self) -> None:
         if self.preflight_process is not None:
-            QMessageBox.warning(self, "Verification", "Une verification est deja en cours.")
+            QMessageBox.warning(self, "Vérification", "Une vérification est déjà en cours.")
             return
         python = venv_python()
         local_checks = [
             ("venv", python.exists(), str(python)),
             ("FFmpeg", shutil.which("ffmpeg") is not None, shutil.which("ffmpeg") or "introuvable dans PATH"),
         ]
-        lines = [f"Backend recommande: {self.recommended_backend_label()}"]
+        lines = [f"Backend recommandé: {self.recommended_backend_label()}"]
         for name, ok, detail in local_checks:
             lines.append(f"{'OK' if ok else 'MANQUANT'} - {name}: {detail}")
         if not python.exists():
-            lines.append(f"Action: lance {setup_command()} puis relance cette verification.")
+            lines.append(f"Action: lance {setup_command()} puis relance cette vérification.")
             self.preflight_output.setPlainText("\n".join(lines))
             return
 
-        self.preflight_output.setPlainText("\n".join(lines + ["Verification des dependances Python..."]))
+        self.preflight_output.setPlainText("\n".join(lines + ["Vérification des dépendances Python..."]))
         self.preflight_btn.setEnabled(False)
         self.preflight_process = QProcess(self)
         self.preflight_process.setProgram(str(python))
@@ -782,17 +998,17 @@ class TranscriptionWindow(QMainWindow):
             output = (stdout + stderr).strip()
         self.preflight_process = None
         current = self.preflight_output.toPlainText()
-        self.preflight_output.setPlainText((current + "\n\n" + (output or "Doctor termine.")).strip())
+        self.preflight_output.setPlainText((current + "\n\n" + (output or "Doctor terminé.")).strip())
         if exit_code != 0:
             self.preflight_btn.setEnabled(True)
-            self.statusBar().showMessage("Verification echouee.")
+            self.statusBar().showMessage("Vérification échouée.")
             return
         if self.diarization.isChecked():
             if not self.hf_token.text().strip():
                 self.preflight_output.append("\nMANQUANT - Token HF requis pour pyannote.")
                 self.preflight_btn.setEnabled(True)
                 return
-            self.preflight_output.append("\nVerification du token HF et des modeles pyannote...")
+            self.preflight_output.append("\nVérification du token HF et des modèles pyannote...")
             self.preflight_process = QProcess(self)
             self.preflight_process.setProgram(str(venv_python()))
             self.preflight_process.setArguments(["-u", str(TRANSCRIBE), "--check-token"])
@@ -805,7 +1021,7 @@ class TranscriptionWindow(QMainWindow):
             self.preflight_process.start()
             return
         self.preflight_btn.setEnabled(True)
-        self.statusBar().showMessage("Verification terminee.")
+        self.statusBar().showMessage("Vérification terminée.")
 
     def preflight_token_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
         output = ""
@@ -815,8 +1031,8 @@ class TranscriptionWindow(QMainWindow):
             output = (stdout + stderr).strip()
         self.preflight_process = None
         self.preflight_btn.setEnabled(True)
-        self.preflight_output.append("\n" + (output or "Test token termine."))
-        self.statusBar().showMessage("Verification terminee." if exit_code == 0 else "Verification token echouee.")
+        self.preflight_output.append("\n" + (output or "Test token terminé."))
+        self.statusBar().showMessage("Vérification terminée." if exit_code == 0 else "Vérification token échouée.")
 
     def _toggle_advanced(self, *_args) -> None:
         self.advanced_group.setVisible(self.advanced_toggle.isChecked())
@@ -870,20 +1086,22 @@ class TranscriptionWindow(QMainWindow):
 
         self.command_preview.setText(" ".join(self._build_args(mask_token=True)) if has_audio else "")
         if needs_token and not has_token:
-            self.settings_hint.setText("Token HF manquant: va dans l'onglet Settings pour activer la separation des personnes.")
-            self.execution_hint.setText("Impossible de lancer avec separation des personnes sans token HF. Configure Settings ou desactive la separation.")
+            self.settings_hint.setText("Token HF manquant: va dans l'onglet Paramètres pour activer la séparation des personnes.")
+            self.execution_hint.setText("Impossible de lancer avec séparation des personnes sans token HF. Configure Paramètres ou désactive la séparation.")
         else:
             self.settings_hint.setText("")
             self.execution_hint.setText("")
+        self.settings_hint.setVisible(bool(self.settings_hint.text()))
+        self.execution_hint.setVisible(bool(self.execution_hint.text()))
 
         if is_running:
             self.statusBar().showMessage("Transcription en cours...")
         elif not has_audio:
-            self.statusBar().showMessage("Selectionne un fichier audio.")
+            self.statusBar().showMessage("Sélectionne un fichier audio.")
         elif needs_token and not has_token:
-            self.statusBar().showMessage("Token Hugging Face requis dans Settings pour separer les locuteurs.")
+            self.statusBar().showMessage("Token Hugging Face requis dans Paramètres pour séparer les locuteurs.")
         else:
-            self.statusBar().showMessage("Pret.")
+            self.statusBar().showMessage("Prêt.")
 
     def choose_file(self) -> None:
         start_dir = str(Path(self.audio_path.text()).parent) if self.audio_path.text().strip() else str(INPUT_DIR)
@@ -896,7 +1114,7 @@ class TranscriptionWindow(QMainWindow):
         for pattern in (f"*{suffix}" for suffix in SUPPORTED_AUDIO_EXTENSIONS):
             candidates.extend(INPUT_DIR.rglob(pattern))
         if not candidates:
-            QMessageBox.warning(self, "Aucun fichier", f"Aucun fichier audio trouve dans {INPUT_DIR}.")
+            QMessageBox.warning(self, "Aucun fichier", f"Aucun fichier audio trouvé dans {INPUT_DIR}.")
             return
         latest = max(candidates, key=lambda path: path.stat().st_mtime)
         self.audio_path.setText(str(latest))
@@ -940,8 +1158,8 @@ class TranscriptionWindow(QMainWindow):
             self.statusBar().showMessage("Token Hugging Face valide.")
             QMessageBox.information(self, "Token HF", "Token valide pour pyannote.")
         else:
-            self.statusBar().showMessage("Token Hugging Face invalide ou non autorise.")
-            QMessageBox.critical(self, "Token HF", output or "Le test du token a echoue.")
+            self.statusBar().showMessage("Token Hugging Face invalide ou non autorisé.")
+            QMessageBox.critical(self, "Token HF", output or "Le test du token a échoué.")
 
     def _build_args(self, mask_token: bool = False) -> list[str]:
         args = [
@@ -991,7 +1209,7 @@ class TranscriptionWindow(QMainWindow):
             QMessageBox.critical(self, "Fichier introuvable", f"Le fichier n'existe pas:\n{audio}")
             return
         if self.min_speakers.value() > self.max_speakers.value():
-            QMessageBox.critical(self, "Locuteurs", "Le minimum doit etre inferieur ou egal au maximum.")
+            QMessageBox.critical(self, "Locuteurs", "Le minimum doit être inférieur ou égal au maximum.")
             return
         if self.device.currentText() == "cpu" and self.model.currentText() == "large-v3":
             answer = QMessageBox.question(
@@ -1014,7 +1232,7 @@ class TranscriptionWindow(QMainWindow):
         self._save_settings()
         self.log.clear()
         self._clear_results()
-        self._set_running_ui(True, "Preparation...")
+        self._set_running_ui(True, "Préparation...")
         self.tabs.setCurrentIndex(2)
         self.append_log("Commande:\n" + " ".join(self._build_args(mask_token=True)) + "\n")
 
@@ -1036,7 +1254,7 @@ class TranscriptionWindow(QMainWindow):
 
     def stop_transcription(self) -> None:
         if self.process:
-            self.append_log("\nArret demande...\n")
+            self.append_log("\nArrêt demandé...\n")
             self.process.kill()
 
     def read_stdout(self) -> None:
@@ -1048,17 +1266,17 @@ class TranscriptionWindow(QMainWindow):
             self.append_log(bytes(self.process.readAllStandardError()).decode("utf-8", errors="replace"))
 
     def process_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
-        self.append_log(f"\nProcess termine avec code {exit_code}.\n")
+        self.append_log(f"\nProcess terminé avec code {exit_code}.\n")
         self.process = None
-        self._set_running_ui(False, "Termine." if exit_code == 0 else "Echec.", complete=exit_code == 0)
+        self._set_running_ui(False, "Terminé." if exit_code == 0 else "Échec.", complete=exit_code == 0)
         self._refresh_state()
         if exit_code == 0:
-            self.statusBar().showMessage("Termine. Les fichiers sont dans output.")
+            self.statusBar().showMessage("Terminé. Les fichiers sont dans output.")
             self._show_results()
             self.refresh_history()
             self.tabs.setCurrentIndex(3)
         else:
-            self.statusBar().showMessage("Echec. Regarde le journal.")
+            self.statusBar().showMessage("Échec. Regarde le journal.")
 
     def process_error(self, error: QProcess.ProcessError) -> None:
         self.append_log(f"\nErreur Qt process: {error.name}\n")
@@ -1089,14 +1307,14 @@ class TranscriptionWindow(QMainWindow):
 
     def _update_stage_from_log(self, text: str) -> None:
         stages = (
-            ("Preparing clean", "Preparation audio...", 10),
-            ("Using existing preprocessed WAV", "Audio prepare deja disponible.", 15),
-            ("Loading ASR model", "Chargement du modele...", 25),
+            ("Preparing clean", "Préparation audio...", 10),
+            ("Using existing preprocessed WAV", "Audio préparé déjà disponible.", 15),
+            ("Loading ASR model", "Chargement du modèle...", 25),
             ("Transcribing", "Transcription...", 45),
             ("Aligning timestamps", "Alignement temporel...", 65),
-            ("Running speaker diarization", "Separation des locuteurs...", 82),
-            ("Diarization skipped", "Separation ignoree.", 82),
-            ("Done. Files written", "Ecriture des resultats...", 95),
+            ("Running speaker diarization", "Séparation des locuteurs...", 82),
+            ("Diarization skipped", "Séparation ignorée.", 82),
+            ("Done. Files written", "Écriture des résultats...", 95),
         )
         for needle, label, value in stages:
             if needle in text:
@@ -1127,21 +1345,21 @@ class TranscriptionWindow(QMainWindow):
 
     def _clear_results(self) -> None:
         self._clear_layout(self.results_layout)
-        self.results_empty = QLabel("Aucun resultat pour l'instant.")
+        self.results_empty = QLabel("Aucun résultat pour l'instant.")
         self.results_empty.setObjectName("Muted")
         self.results_layout.addWidget(self.results_empty)
         self._clear_layout(self.speakers_layout)
         self.speaker_inputs = {}
-        self.speakers_empty = QLabel("Aucun locuteur detecte.")
+        self.speakers_empty = QLabel("Aucun locuteur détecté.")
         self.speakers_empty.setObjectName("Muted")
         self.speakers_layout.addWidget(self.speakers_empty)
-        self.regenerate_btn = QPushButton("Regenerer les fichiers")
+        self.regenerate_btn = QPushButton("Régénérer les exports")
         self.regenerate_btn.setObjectName("Primary")
         self.regenerate_btn.clicked.connect(self.regenerate_outputs)
         self.regenerate_btn.setEnabled(False)
         self.speakers_layout.addWidget(self.regenerate_btn)
         self._clear_layout(self.quick_files_layout)
-        self.quick_files_empty = QLabel("Aucun fichier prioritaire trouve.")
+        self.quick_files_empty = QLabel("Aucun export prioritaire trouvé.")
         self.quick_files_empty.setObjectName("Muted")
         self.quick_files_layout.addWidget(self.quick_files_empty)
         self.preview_text.clear()
@@ -1150,7 +1368,7 @@ class TranscriptionWindow(QMainWindow):
         self._clear_results()
         paths = [path for path in self._expected_outputs() if path.exists()]
         if not paths:
-            self.results_empty.setText("Termine, mais aucun fichier attendu n'a ete trouve dans output.")
+            self.results_empty.setText("Terminé, mais aucun fichier attendu n'a été trouvé dans output.")
             return
 
         self.results_layout.takeAt(0).widget().deleteLater()
@@ -1162,7 +1380,7 @@ class TranscriptionWindow(QMainWindow):
             row_layout.addWidget(name, 1)
             open_btn = QPushButton("Ouvrir")
             open_btn.clicked.connect(lambda _checked=False, p=path: self.open_file(p))
-            copy_btn = QPushButton("Copier chemin")
+            copy_btn = QPushButton("Copier le chemin")
             copy_btn.clicked.connect(lambda _checked=False, p=path: QApplication.clipboard().setText(str(p)))
             row_layout.addWidget(open_btn)
             row_layout.addWidget(copy_btn)
@@ -1186,7 +1404,7 @@ class TranscriptionWindow(QMainWindow):
         if preview_path and preview_path.exists():
             self.preview_text.setPlainText(preview_path.read_text(encoding="utf-8", errors="replace")[:20000])
         else:
-            self.preview_text.setPlainText("Aucun apercu disponible.")
+            self.preview_text.setPlainText("Aucun aperçu disponible.")
 
     def _load_speakers(self) -> None:
         data = self._load_segments_data()
@@ -1212,7 +1430,7 @@ class TranscriptionWindow(QMainWindow):
             row.addWidget(field, 1)
             self.speakers_layout.addLayout(row)
             self.speaker_inputs[speaker] = field
-        self.regenerate_btn = QPushButton("Regenerer les fichiers")
+        self.regenerate_btn = QPushButton("Régénérer les exports")
         self.regenerate_btn.setObjectName("Primary")
         self.regenerate_btn.clicked.connect(self.regenerate_outputs)
         self.regenerate_btn.setEnabled(True)
@@ -1255,17 +1473,17 @@ class TranscriptionWindow(QMainWindow):
             return
         audio = self.audio_path.text().strip()
         if not audio:
-            QMessageBox.warning(self, "Audio", "Aucun fichier audio associe aux resultats.")
+            QMessageBox.warning(self, "Audio", "Aucun fichier audio associé aux résultats.")
             return
         python = venv_python()
         if not python.exists():
             QMessageBox.critical(self, "Environnement", f"L'environnement .venv est introuvable. Lance {setup_command()}")
             return
         if self.regenerate_process is not None:
-            QMessageBox.warning(self, "Regeneration", "Une regeneration est deja en cours.")
+            QMessageBox.warning(self, "Régénération", "Une régénération est déjà en cours.")
             return
         self.regenerate_btn.setEnabled(False)
-        self.statusBar().showMessage("Regeneration des exports...")
+        self.statusBar().showMessage("Régénération des exports...")
         self.regenerate_process = QProcess(self)
         self.regenerate_process.setProgram(str(python))
         self.regenerate_process.setArguments(
@@ -1301,12 +1519,12 @@ class TranscriptionWindow(QMainWindow):
         self.regenerate_process = None
         self.regenerate_btn.setEnabled(True)
         if exit_code == 0:
-            self.statusBar().showMessage("Exports regeneres.")
+            self.statusBar().showMessage("Exports régénérés.")
             self._show_results()
             self.refresh_history()
         else:
-            self.statusBar().showMessage("Echec de regeneration.")
-            QMessageBox.critical(self, "Regeneration", output or "La regeneration a echoue.")
+            self.statusBar().showMessage("Échec de régénération.")
+            QMessageBox.critical(self, "Régénération", output or "La régénération a échoué.")
 
     def refresh_history(self) -> None:
         self.history_records = self.load_history_records()
@@ -1405,7 +1623,7 @@ class TranscriptionWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "Supprimer",
-            "Supprimer cette entree d'historique et les fichiers generes encore presents ?",
+            "Supprimer cette entrée d'historique et les fichiers générés encore présents ?",
             QMessageBox.Yes | QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -1448,7 +1666,7 @@ class TranscriptionWindow(QMainWindow):
             answer = QMessageBox.question(
                 self,
                 "Transcription en cours",
-                "Arreter la transcription et fermer ?",
+                "Arrêter la transcription et fermer ?",
                 QMessageBox.Yes | QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
@@ -1461,6 +1679,7 @@ class TranscriptionWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     app.setApplicationName("WhisperX Transcription")
     app.setWindowIcon(QIcon())
     window = TranscriptionWindow()
