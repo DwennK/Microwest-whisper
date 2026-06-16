@@ -191,8 +191,8 @@ Le workflow GitHub Actions `.github/workflows/build-release.yml` lance:
 Pour publier une release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Tu peux aussi lancer le workflow manuellement depuis l'onglet Actions de GitHub. Le lancement manuel produit les artifacts, mais ne cree pas de release taggee.
