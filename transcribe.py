@@ -8,17 +8,22 @@ import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from transcript_paths import SUPPORTED_AUDIO_EXTENSIONS, transcript_stem, work_wav_path
 
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
-
-SUPPORTED_EXTENSIONS = {".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".wav", ".webm", ".flac", ".ogg"}
+if load_dotenv:
+    load_dotenv()
 
 
 @dataclass(frozen=True)
@@ -33,9 +38,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="High-quality French transcription with WhisperX alignment and speaker diarization."
     )
-    parser.add_argument("--audio", required=True, help="Path to the source audio file, for example recording.m4a.")
+    parser.add_argument("--audio", help="Path to the source audio file, for example recording.m4a.")
+    parser.add_argument("--doctor", action="store_true", help="Check Python, FFmpeg, optional GPU and installed packages.")
+    parser.add_argument("--check-token", action="store_true", help="Check whether the Hugging Face token can load pyannote.")
     parser.add_argument("--output-dir", default="output", help="Directory where transcript files are written.")
     parser.add_argument("--work-dir", default="work", help="Directory for intermediate WAV files.")
+    parser.add_argument(
+        "--profile",
+        choices=["manual", "auto", "quality", "fast", "cpu", "no-speakers"],
+        default="manual",
+        help="Preset profile. manual keeps the explicit options.",
+    )
     parser.add_argument("--model", default="large-v3", help="Whisper model. Use large-v3 for best quality.")
     parser.add_argument(
         "--asr-backend",
@@ -64,6 +77,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-speakers", type=int, default=None, help="Minimum number of speakers.")
     parser.add_argument("--max-speakers", type=int, default=None, help="Maximum number of speakers.")
     parser.add_argument("--delete-work", action="store_true", help="Delete the intermediate WAV file after success.")
+    parser.add_argument("--force", action="store_true", help="Ignore reusable checkpoints and recompute all stages.")
+    parser.add_argument(
+        "--audio-filter",
+        choices=["loudnorm", "voice-clean", "none"],
+        default="loudnorm",
+        help="FFmpeg audio filter before ASR.",
+    )
+    parser.add_argument("--trim-silence", action="store_true", help="Trim leading and trailing silence during preprocessing.")
+    parser.add_argument(
+        "--speaker-map",
+        default="",
+        help='Rename speakers, for example "SPEAKER_00=Alice,SPEAKER_01=Bob".',
+    )
+    parser.add_argument("--speaker-map-file", default="", help="JSON file containing speaker rename mappings.")
+    parser.add_argument(
+        "--rename-only",
+        action="store_true",
+        help="Regenerate exports from the saved final checkpoint after applying speaker names.",
+    )
     return parser.parse_args()
 
 
@@ -72,24 +104,108 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def slugify(value: str) -> str:
-    value = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("_.")
-    return value or "audio"
+def apply_profile(args: argparse.Namespace) -> None:
+    profile = args.profile
+    if profile == "manual":
+        return
+    if profile == "auto":
+        profile = recommended_profile()
+
+    if profile == "fast":
+        args.model = "large-v3-turbo"
+        args.batch_size = max(args.batch_size, 12)
+        args.device = "auto"
+        args.compute_type = "auto"
+    elif profile == "cpu":
+        args.model = "medium"
+        args.batch_size = min(args.batch_size, 4)
+        args.device = "cpu"
+        args.compute_type = "int8"
+    elif profile == "no-speakers":
+        args.model = "large-v3"
+        args.no_diarization = True
+    elif profile == "quality":
+        args.model = "large-v3"
+        args.batch_size = 8
+        args.device = "auto"
+        args.compute_type = "auto"
+
+
+def recommended_profile() -> str:
+    if is_apple_silicon():
+        return "quality"
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "quality"
+    except Exception:
+        pass
+    cpu_count = os.cpu_count() or 4
+    return "cpu" if cpu_count <= 8 else "fast"
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if args.doctor:
+        return
+    if args.check_token and not args.audio:
+        return
+    if not args.audio:
+        fail("--audio is required unless --doctor or --check-token is used alone.")
+
+    speaker_values = {
+        "--speakers": args.speakers,
+        "--min-speakers": args.min_speakers,
+        "--max-speakers": args.max_speakers,
+    }
+    for option, value in speaker_values.items():
+        if value is not None and value < 1:
+            fail(f"{option} must be greater than 0.")
+
+    if args.speakers and (args.min_speakers or args.max_speakers):
+        fail("Use either --speakers or --min-speakers/--max-speakers, not both.")
+    if args.min_speakers and args.max_speakers and args.min_speakers > args.max_speakers:
+        fail("--min-speakers must be lower than or equal to --max-speakers.")
+    if args.rename_only and not args.speaker_map and not args.speaker_map_file:
+        fail("--rename-only requires --speaker-map or --speaker-map-file.")
 
 
 def build_paths(args: argparse.Namespace) -> Paths:
     audio = Path(args.audio).expanduser().resolve()
     if not audio.exists():
         fail(f"Audio file not found: {audio}")
-    if audio.suffix.lower() not in SUPPORTED_EXTENSIONS:
-        fail(f"Unsupported audio extension '{audio.suffix}'. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
+    if audio.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS:
+        fail(
+            f"Unsupported audio extension '{audio.suffix}'. "
+            f"Supported: {', '.join(sorted(SUPPORTED_AUDIO_EXTENSIONS))}"
+        )
 
     output_dir = Path(args.output_dir).resolve()
     work_dir = Path(args.work_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
-    wav = work_dir / f"{slugify(audio.stem)}.16k-mono.wav"
+    wav = work_wav_path(audio, work_dir)
     return Paths(audio=audio, output_dir=output_dir, work_dir=work_dir, wav=wav)
+
+
+def checkpoint_path(paths: Paths, stage: str) -> Path:
+    return paths.work_dir / f"{transcript_stem(paths.audio)}.{stage}.json"
+
+
+def load_checkpoint(paths: Paths, stage: str, force: bool = False) -> dict[str, Any] | None:
+    path = checkpoint_path(paths, stage)
+    if force or not path.exists() or path.stat().st_mtime < paths.audio.stat().st_mtime:
+        return None
+    print(f"Using existing {stage} checkpoint: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def save_checkpoint(paths: Paths, stage: str, result: dict[str, Any]) -> None:
+    path = checkpoint_path(paths, stage)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False, indent=2)
+    print(f"Saved {stage} checkpoint: {path}")
 
 
 def run(command: list[str]) -> None:
@@ -111,41 +227,65 @@ def find_ffmpeg() -> str | None:
                 ffmpeg_path = str(matches[0])
                 os.environ["PATH"] = f"{str(matches[0].parent)}{os.pathsep}{os.environ.get('PATH', '')}"
                 return ffmpeg_path
+    try:
+        import imageio_ffmpeg
+
+        bundled_ffmpeg = Path(imageio_ffmpeg.get_ffmpeg_exe())
+        if bundled_ffmpeg.exists():
+            os.environ["PATH"] = f"{str(bundled_ffmpeg.parent)}{os.pathsep}{os.environ.get('PATH', '')}"
+            return str(bundled_ffmpeg)
+    except Exception:
+        pass
     return None
 
 
 def ensure_ffmpeg() -> str:
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
-        fail("FFmpeg is not available in PATH. Install it with: winget install --id Gyan.FFmpeg -e")
+        if platform.system() == "Windows":
+            install_hint = "winget install --id Gyan.FFmpeg -e"
+        elif platform.system() == "Darwin":
+            install_hint = "brew install ffmpeg"
+        else:
+            install_hint = "install ffmpeg with your package manager"
+        fail(f"FFmpeg is not available in PATH. Install it with: {install_hint}")
     return ffmpeg
 
 
-def prepare_wav(paths: Paths) -> None:
+def build_audio_filter(args: argparse.Namespace) -> str | None:
+    filters: list[str] = []
+    if args.trim_silence:
+        filters.append("silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB")
+    if args.audio_filter == "loudnorm":
+        filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+    elif args.audio_filter == "voice-clean":
+        filters.extend(["highpass=f=80", "lowpass=f=7800", "afftdn=nf=-25", "loudnorm=I=-16:TP=-1.5:LRA=11"])
+    return ",".join(filters) if filters else None
+
+
+def prepare_wav(paths: Paths, args: argparse.Namespace) -> None:
     ffmpeg = ensure_ffmpeg()
     if paths.wav.exists() and paths.wav.stat().st_mtime >= paths.audio.stat().st_mtime:
         print(f"Using existing preprocessed WAV: {paths.wav}")
         return
 
     print("Preparing clean 16 kHz mono WAV for ASR...")
-    run(
-        [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(paths.audio),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-af",
-            "loudnorm=I=-16:TP=-1.5:LRA=11",
-            "-c:a",
-            "pcm_s16le",
-            str(paths.wav),
-        ]
-    )
+    command = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(paths.audio),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+    ]
+    audio_filter = build_audio_filter(args)
+    if audio_filter:
+        command.extend(["-af", audio_filter])
+    command.extend(["-c:a", "pcm_s16le", str(paths.wav)])
+    run(command)
 
 
 def select_device(requested: str) -> str:
@@ -211,6 +351,10 @@ def resolve_mlx_model(model: str, requested: str) -> str:
     return mapping.get(model, f"mlx-community/whisper-{model}-mlx")
 
 
+def model_language(language: str) -> str | None:
+    return None if language == "auto" else language
+
+
 def transcribe_with_mlx(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
     import mlx_whisper
 
@@ -220,11 +364,13 @@ def transcribe_with_mlx(paths: Paths, args: argparse.Namespace) -> dict[str, Any
     print("Transcribing with MLX on Apple Silicon...")
     kwargs: dict[str, Any] = {
         "path_or_hf_repo": model_name,
-        "language": args.language,
         "task": "transcribe",
         "word_timestamps": False,
         "verbose": False,
     }
+    language = model_language(args.language)
+    if language:
+        kwargs["language"] = language
     try:
         result = mlx_whisper.transcribe(str(paths.wav), **kwargs)
     except TypeError:
@@ -246,7 +392,7 @@ def transcribe_with_mlx(paths: Paths, args: argparse.Namespace) -> dict[str, Any
 
     return {
         "segments": segments,
-        "language": result.get("language") or args.language,
+        "language": result.get("language") or model_language(args.language) or "fr",
         "text": result.get("text", ""),
         "asr_backend": "mlx",
         "mlx_model": model_name,
@@ -262,6 +408,7 @@ def transcribe_with_whisperx(audio: Any, args: argparse.Namespace) -> tuple[dict
 
     device = select_device(args.device)
     compute_type = select_compute_type(device, args.compute_type)
+    language = model_language(args.language)
     print(f"ASR backend: whisperx/faster-whisper")
     print(f"Device: {device}")
     print(f"Compute type: {compute_type}")
@@ -275,7 +422,7 @@ def transcribe_with_whisperx(audio: Any, args: argparse.Namespace) -> tuple[dict
             args.model,
             device,
             compute_type=compute_type,
-            language=args.language,
+            language=language,
             threads=threads,
         )
     except ValueError as exc:
@@ -286,14 +433,14 @@ def transcribe_with_whisperx(audio: Any, args: argparse.Namespace) -> tuple[dict
                 args.model,
                 device,
                 compute_type=compute_type,
-                language=args.language,
+                language=language,
                 threads=threads,
             )
         else:
             raise
 
     print("Transcribing...")
-    result = model.transcribe(audio, batch_size=args.batch_size, language=args.language)
+    result = model.transcribe(audio, batch_size=args.batch_size, language=language)
     result["asr_backend"] = "whisperx"
 
     del model
@@ -374,8 +521,141 @@ def write_markdown(path: Path, turns: list[dict[str, Any]], source: Path) -> Non
             handle.write(f'{turn["text"]}\n\n')
 
 
-def write_outputs(paths: Paths, result: dict[str, Any]) -> None:
-    stem = slugify(paths.audio.stem)
+def write_clean_txt(path: Path, turns: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for turn in turns:
+            handle.write(f'{turn["speaker"]}: {turn["text"]}\n\n')
+
+
+def extract_meeting_notes(turns: list[dict[str, Any]]) -> dict[str, Any]:
+    action_pattern = re_compile(
+        r"\b(il faut|on doit|je vais|tu vas|nous allons|a faire|action|relancer|envoyer|preparer|valider)\b"
+    )
+    decision_pattern = re_compile(r"\b(decision|decide|valide|accord|on part sur|retenu|approuve)\b")
+    question_pattern = re_compile(r"\?")
+
+    notes = {"actions": [], "decisions": [], "questions": []}
+    for turn in turns:
+        text = turn["text"]
+        item = {
+            "speaker": turn["speaker"],
+            "time": format_ts(turn["start"], sep="."),
+            "text": text,
+        }
+        lowered = strip_accents(text.lower())
+        if action_pattern.search(lowered):
+            notes["actions"].append(item)
+        if decision_pattern.search(lowered):
+            notes["decisions"].append(item)
+        if question_pattern.search(text):
+            notes["questions"].append(item)
+    return notes
+
+
+def strip_accents(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(character for character in normalized if not unicodedata.combining(character))
+
+
+def re_compile(pattern: str) -> Any:
+    return re.compile(pattern, re.IGNORECASE)
+
+
+def write_notes_markdown(path: Path, turns: list[dict[str, Any]], source: Path) -> None:
+    notes = extract_meeting_notes(turns)
+    speakers = sorted({turn["speaker"] for turn in turns})
+    duration = format_ts(turns[-1]["end"], sep=".") if turns else "00:00:00.000"
+
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("# Notes de transcription\n\n")
+        handle.write(f"Source: `{source.name}`\n\n")
+        handle.write(f"- Duree: `{duration}`\n")
+        handle.write(f"- Locuteurs detectes: {', '.join(speakers) if speakers else 'aucun'}\n")
+        handle.write(f"- Tours de parole: {len(turns)}\n\n")
+
+        sections = (
+            ("Actions possibles", notes["actions"]),
+            ("Decisions possibles", notes["decisions"]),
+            ("Questions", notes["questions"]),
+        )
+        for title, items in sections:
+            handle.write(f"## {title}\n\n")
+            if not items:
+                handle.write("_Aucun element detecte automatiquement._\n\n")
+                continue
+            for item in items:
+                handle.write(f'- `{item["time"]}` **{item["speaker"]}**: {item["text"]}\n')
+            handle.write("\n")
+
+
+def write_docx(path: Path, turns: list[dict[str, Any]], source: Path) -> bool:
+    try:
+        from docx import Document
+    except ImportError:
+        print("DOCX export skipped: install python-docx to enable it.")
+        return False
+
+    document = Document()
+    document.add_heading("Transcription", level=1)
+    document.add_paragraph(f"Source: {source.name}")
+    for turn in turns:
+        paragraph = document.add_paragraph()
+        speaker = paragraph.add_run(f'{turn["speaker"]} ')
+        speaker.bold = True
+        paragraph.add_run(f'[{format_ts(turn["start"], sep=".")} - {format_ts(turn["end"], sep=".")}]')
+        document.add_paragraph(turn["text"])
+    document.save(path)
+    return True
+
+
+def parse_speaker_map(value: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    if not value.strip():
+        return mapping
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        if "=" not in item:
+            fail(f"Invalid speaker mapping '{item}'. Expected SPEAKER_00=Name.")
+        key, name = item.split("=", 1)
+        key = key.strip()
+        name = name.strip()
+        if not key or not name:
+            fail(f"Invalid speaker mapping '{item}'. Expected SPEAKER_00=Name.")
+        mapping[key] = name
+    return mapping
+
+
+def load_speaker_map(args: argparse.Namespace) -> dict[str, str]:
+    mapping = parse_speaker_map(args.speaker_map)
+    if args.speaker_map_file:
+        path = Path(args.speaker_map_file).expanduser()
+        with path.open("r", encoding="utf-8") as handle:
+            file_mapping = json.load(handle)
+        if not isinstance(file_mapping, dict):
+            fail("--speaker-map-file must contain a JSON object.")
+        mapping.update({str(key): str(value) for key, value in file_mapping.items() if str(value).strip()})
+    return mapping
+
+
+def apply_speaker_map(result: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
+    if not mapping:
+        return result
+    updated = json.loads(json.dumps(result))
+    for segment in updated.get("segments", []):
+        speaker = segment.get("speaker")
+        if speaker in mapping:
+            segment["speaker"] = mapping[speaker]
+        for word in segment.get("words", []) or []:
+            word_speaker = word.get("speaker")
+            if word_speaker in mapping:
+                word["speaker"] = mapping[word_speaker]
+    updated["speaker_map"] = mapping
+    return updated
+
+
+def write_outputs(paths: Paths, result: dict[str, Any]) -> list[Path]:
+    stem = transcript_stem(paths.audio)
     segments = normalize_segments(result)
     turns = merge_turns(segments)
 
@@ -384,56 +664,186 @@ def write_outputs(paths: Paths, result: dict[str, Any]) -> None:
     txt = paths.output_dir / f"{stem}.speaker-turns.txt"
     srt = paths.output_dir / f"{stem}.speaker-segments.srt"
     md = paths.output_dir / f"{stem}.speaker-turns.md"
+    clean_txt = paths.output_dir / f"{stem}.clean.txt"
+    notes_md = paths.output_dir / f"{stem}.notes.md"
+    docx = paths.output_dir / f"{stem}.transcript.docx"
 
     with raw_json.open("w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False, indent=2)
     with segments_json.open("w", encoding="utf-8") as handle:
-        json.dump({"segments": segments, "turns": turns}, handle, ensure_ascii=False, indent=2)
+        json.dump({"source": str(paths.audio), "segments": segments, "turns": turns}, handle, ensure_ascii=False, indent=2)
     write_txt(txt, turns)
     write_srt(srt, segments)
     write_markdown(md, turns, paths.audio)
+    write_clean_txt(clean_txt, turns)
+    write_notes_markdown(notes_md, turns, paths.audio)
+    wrote_docx = write_docx(docx, turns, paths.audio)
 
     print("")
     print("Done. Files written:")
-    for path in (txt, md, srt, segments_json, raw_json):
+    output_paths = [txt, md, clean_txt, srt, segments_json, notes_md, raw_json]
+    if wrote_docx:
+        output_paths.insert(6, docx)
+    for path in output_paths:
         print(f"- {path}")
+    return output_paths
+
+
+def append_history(paths: Paths, args: argparse.Namespace, output_paths: list[Path], status: str = "success") -> None:
+    history = paths.output_dir / "transcription-history.jsonl"
+    duration_seconds = None
+    segments_path = paths.output_dir / f"{transcript_stem(paths.audio)}.segments.json"
+    if segments_path.exists():
+        try:
+            with segments_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            turns = data.get("turns") or []
+            if turns:
+                duration_seconds = max(float(turn.get("end", 0.0)) for turn in turns)
+        except Exception:
+            duration_seconds = None
+    record = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "source_audio": str(paths.audio),
+        "stem": transcript_stem(paths.audio),
+        "duration_seconds": duration_seconds,
+        "language": args.language,
+        "profile": args.profile,
+        "model": args.model,
+        "asr_backend": args.asr_backend,
+        "diarization": not args.no_diarization,
+        "outputs": [str(path) for path in output_paths],
+    }
+    with history.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(f"History updated: {history}")
+
+
+def import_status(module: str) -> str:
+    try:
+        __import__(module)
+        return "ok"
+    except Exception as exc:
+        return f"missing ({exc})"
+
+
+def run_doctor() -> None:
+    print("Microwest Whisper doctor")
+    print(f"- Python: {sys.version.split()[0]} ({sys.executable})")
+    print(f"- Platform: {platform.system()} {platform.machine()}")
+    print(f"- CPU cores: {os.cpu_count() or 'unknown'}")
+    ffmpeg = find_ffmpeg()
+    print(f"- FFmpeg: {ffmpeg or 'missing'}")
+    print(f"- whisperx: {import_status('whisperx')}")
+    print(f"- PySide6: {import_status('PySide6')}")
+    print(f"- python-dotenv: {import_status('dotenv')}")
+    print(f"- python-docx: {import_status('docx')}")
+    print(f"- mlx-whisper: {import_status('mlx_whisper')}")
+    try:
+        import torch
+
+        print(f"- torch: ok")
+        print(f"- CUDA: {'available' if torch.cuda.is_available() else 'not available'}")
+    except Exception as exc:
+        print(f"- torch: missing ({exc})")
+
+
+def check_hf_token(token: str | None) -> None:
+    if not token:
+        fail("Hugging Face token missing. Set HUGGINGFACE_TOKEN or pass --hf-token.")
+    try:
+        import whisperx
+
+        whisperx.diarize.DiarizationPipeline(token=token, device="cpu")
+    except Exception as exc:
+        fail(
+            "Hugging Face token check failed. Verify the token and accept pyannote model terms. "
+            f"Details: {exc}"
+        )
+    print("Hugging Face token check: ok")
+
+
+def regenerate_from_checkpoint(paths: Paths, args: argparse.Namespace) -> list[Path]:
+    stages = ["final.diarized", "final.no-diarization", "aligned"]
+    if args.no_diarization:
+        stages = ["final.no-diarization", "final.diarized", "aligned"]
+    result = None
+    for stage in stages:
+        result = load_checkpoint(paths, stage, force=False)
+        if result is not None:
+            break
+    if result is None:
+        fail("No reusable checkpoint found. Run a transcription before --rename-only.")
+    result = apply_speaker_map(result, load_speaker_map(args))
+    return write_outputs(paths, result)
 
 
 def transcribe(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
     import gc
 
-    import whisperx
+    try:
+        import whisperx
+    except ImportError as exc:
+        fail(f"WhisperX is not installed in this environment. Run the setup script first. Details: {exc}")
+
+    backend = resolve_asr_backend(args.asr_backend)
+    device = "cpu" if backend == "mlx" else select_device(args.device)
+
+    final_checkpoint = "final.no-diarization" if args.no_diarization else "final.diarized"
+    final_result = load_checkpoint(paths, final_checkpoint, args.force)
+    if final_result is not None:
+        return final_result
 
     audio = whisperx.load_audio(str(paths.wav))
-    backend = resolve_asr_backend(args.asr_backend)
 
-    if backend == "mlx":
-        result = transcribe_with_mlx(paths, args)
-        device = "cpu"
-    else:
-        result, device = transcribe_with_whisperx(audio, args)
+    result = load_checkpoint(paths, "asr", args.force)
+    if result is None:
+        if backend == "mlx":
+            result = transcribe_with_mlx(paths, args)
+            device = "cpu"
+        else:
+            result, device = transcribe_with_whisperx(audio, args)
+        result["source_audio"] = str(paths.audio)
+        result["preprocessed_wav"] = str(paths.wav)
+        save_checkpoint(paths, "asr", result)
 
     result["source_audio"] = str(paths.audio)
     result["preprocessed_wav"] = str(paths.wav)
 
-    print("Aligning timestamps...")
-    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-    result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+    aligned = load_checkpoint(paths, "aligned", args.force)
+    if aligned is None:
+        print("Aligning timestamps...")
+        model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
+        aligned = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+        aligned["source_audio"] = str(paths.audio)
+        aligned["preprocessed_wav"] = str(paths.wav)
+        aligned["asr_backend"] = result.get("asr_backend")
+        save_checkpoint(paths, "aligned", aligned)
 
-    del model_a
-    gc.collect()
+        del model_a
+        gc.collect()
+    result = aligned
 
     if args.no_diarization:
         print("Diarization skipped.")
         for segment in result.get("segments", []):
             segment["speaker"] = "SPEAKER_00"
+        save_checkpoint(paths, final_checkpoint, result)
         return result
 
     if not args.hf_token:
         fail("Hugging Face token missing. Pass --hf-token or set HUGGINGFACE_TOKEN.")
 
     print("Running speaker diarization with pyannote...")
-    diarize_model = whisperx.diarize.DiarizationPipeline(token=args.hf_token, device=device)
+    try:
+        diarize_model = whisperx.diarize.DiarizationPipeline(token=args.hf_token, device=device)
+    except Exception as exc:
+        fail(
+            "Speaker diarization could not start. Check that the Hugging Face token is valid and that "
+            "the pyannote model terms have been accepted. Details: "
+            f"{exc}"
+        )
     diarize_kwargs: dict[str, int] = {}
     if args.speakers:
         diarize_kwargs["num_speakers"] = args.speakers
@@ -442,22 +852,50 @@ def transcribe(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
     if args.max_speakers:
         diarize_kwargs["max_speakers"] = args.max_speakers
 
-    diarize_segments = diarize_model(audio, **diarize_kwargs)
+    try:
+        diarize_segments = diarize_model(audio, **diarize_kwargs)
+    except Exception as exc:
+        fail(f"Speaker diarization failed while processing the audio. Details: {exc}")
     result = whisperx.assign_word_speakers(diarize_segments, result)
+    result["source_audio"] = str(paths.audio)
+    result["preprocessed_wav"] = str(paths.wav)
+    save_checkpoint(paths, final_checkpoint, result)
     return result
 
 
 def main() -> None:
     args = parse_args()
-    paths = build_paths(args)
-    prepare_wav(paths)
-    result = transcribe(paths, args)
-    write_outputs(paths, result)
-    if args.delete_work:
-        paths.wav.unlink(missing_ok=True)
-        print(f"Intermediate WAV deleted: {paths.wav}")
-    else:
-        print(f"Intermediate WAV kept for reuse: {paths.wav}")
+    try:
+        apply_profile(args)
+        validate_args(args)
+        if args.doctor:
+            run_doctor()
+            return
+        if args.check_token and not args.audio:
+            check_hf_token(args.hf_token)
+            return
+        paths = build_paths(args)
+        if args.check_token:
+            check_hf_token(args.hf_token)
+        if args.rename_only:
+            output_paths = regenerate_from_checkpoint(paths, args)
+            append_history(paths, args, output_paths, status="renamed")
+            return
+        prepare_wav(paths, args)
+        result = transcribe(paths, args)
+        result = apply_speaker_map(result, load_speaker_map(args))
+        output_paths = write_outputs(paths, result)
+        append_history(paths, args, output_paths)
+        if args.delete_work:
+            paths.wav.unlink(missing_ok=True)
+            print(f"Intermediate WAV deleted: {paths.wav}")
+        else:
+            print(f"Intermediate WAV kept for reuse: {paths.wav}")
+    except subprocess.CalledProcessError as exc:
+        command = " ".join(str(part) for part in exc.cmd) if exc.cmd else "external command"
+        fail(f"Command failed with exit code {exc.returncode}: {command}")
+    except KeyboardInterrupt:
+        fail("Interrupted by user.")
 
 
 if __name__ == "__main__":

@@ -24,9 +24,11 @@ fi
 ARGS=(
   transcribe.py
   --audio "${AUDIO}"
+  --profile "${TRANSCRIBE_PROFILE:-manual}"
   --model large-v3
   --asr-backend auto
-  --language fr
+  --language "${TRANSCRIBE_LANGUAGE:-fr}"
+  --audio-filter "${TRANSCRIBE_AUDIO_FILTER:-loudnorm}"
 )
 
 if [[ -n "${HF_TOKEN}" ]]; then
@@ -37,6 +39,15 @@ fi
 
 if [[ -n "${SPEAKERS}" ]]; then
   ARGS+=(--speakers "${SPEAKERS}")
+fi
+if [[ -n "${TRANSCRIBE_SPEAKER_MAP:-}" ]]; then
+  ARGS+=(--speaker-map "${TRANSCRIBE_SPEAKER_MAP}")
+fi
+if [[ "${TRANSCRIBE_TRIM_SILENCE:-0}" == "1" ]]; then
+  ARGS+=(--trim-silence)
+fi
+if [[ "${TRANSCRIBE_FORCE:-0}" == "1" ]]; then
+  ARGS+=(--force)
 fi
 
 ./.venv/bin/python "${ARGS[@]}"

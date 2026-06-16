@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
-import re
+import platform
+import shutil
 import sys
 from pathlib import Path
 
@@ -12,6 +14,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QHeaderView,
+    QAbstractItemView,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -27,10 +31,14 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStatusBar,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+
+from transcript_paths import SUPPORTED_AUDIO_EXTENSIONS, expected_output_paths
 
 
 ROOT = Path(__file__).resolve().parent
@@ -38,19 +46,27 @@ INPUT_DIR = ROOT / "input"
 OUTPUT_DIR = ROOT / "output"
 WORK_DIR = ROOT / "work"
 ENV_PATH = ROOT / ".env"
-PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 TRANSCRIBE = ROOT / "transcribe.py"
-AUDIO_FILTER = "Audio (*.m4a *.mp3 *.wav *.mp4 *.webm *.flac *.ogg);;Tous les fichiers (*.*)"
+AUDIO_PATTERNS = " ".join(f"*{suffix}" for suffix in sorted(SUPPORTED_AUDIO_EXTENSIONS))
+AUDIO_FILTER = f"Audio ({AUDIO_PATTERNS});;Tous les fichiers (*.*)"
 PRESET_QUALITY = "Qualite max (large-v3)"
+PRESET_AUTO = "Auto machine"
 PRESET_FAST = "Rapide (large-v3-turbo)"
 PRESET_CPU = "CPU leger (medium + int8)"
 PRESET_NO_SPEAKERS = "Sans locuteurs (large-v3, no diarization)"
-PRESET_LABELS = [PRESET_QUALITY, PRESET_FAST, PRESET_CPU, PRESET_NO_SPEAKERS]
+PRESET_LABELS = [PRESET_QUALITY, PRESET_AUTO, PRESET_FAST, PRESET_CPU, PRESET_NO_SPEAKERS]
 PRESET_DESCRIPTIONS = {
     PRESET_QUALITY: "Le meilleur choix par defaut: precision prioritaire, plus lent sur CPU.",
+    PRESET_AUTO: "Detecte la machine et choisit un profil prudent automatiquement.",
     PRESET_FAST: "Plus rapide, avec une petite concession possible sur la qualite.",
     PRESET_CPU: "Profil prudent pour une machine sans GPU ou avec peu de memoire.",
     PRESET_NO_SPEAKERS: "Transcrit seulement le texte: pas de token HF, pas de separation par personne.",
+}
+
+LANGUAGES = {
+    "Francais": "fr",
+    "Anglais": "en",
+    "Auto": "auto",
 }
 OLD_PRESET_NAMES = {
     "Meilleure qualite": PRESET_QUALITY,
@@ -60,15 +76,33 @@ OLD_PRESET_NAMES = {
 }
 
 
-def slugify(value: str) -> str:
-    value = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("_.")
-    return value or "audio"
+def venv_python() -> Path:
+    if sys.platform == "win32":
+        return ROOT / ".venv" / "Scripts" / "python.exe"
+    return ROOT / ".venv" / "bin" / "python"
+
+
+def setup_command() -> str:
+    return ".\\setup.ps1" if sys.platform == "win32" else "./setup-mac.sh"
+
+
+def recommended_preset() -> str:
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        return PRESET_QUALITY
+    if (os.cpu_count() or 4) <= 8:
+        return PRESET_CPU
+    return PRESET_FAST
 
 
 class TranscriptionWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.process: QProcess | None = None
+        self.token_process: QProcess | None = None
+        self.preflight_process: QProcess | None = None
+        self.regenerate_process: QProcess | None = None
+        self.history_records: list[dict] = []
+        self.speaker_inputs: dict[str, QLineEdit] = {}
         self.elapsed_seconds = 0
         self.settings = QSettings("Codex", "WhisperLocalTranscriber")
         INPUT_DIR.mkdir(exist_ok=True)
@@ -83,6 +117,7 @@ class TranscriptionWindow(QMainWindow):
         self._build_ui()
         self._load_settings()
         self._refresh_state()
+        self.refresh_history()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -223,8 +258,14 @@ class TranscriptionWindow(QMainWindow):
         self.model = QComboBox()
         self.model.addItems(["large-v3", "medium", "small", "large-v3-turbo"])
         self.model.setCurrentText("large-v3")
+        self.language = QComboBox()
+        self.language.addItems(LANGUAGES.keys())
         self.asr_backend = QComboBox()
         self.asr_backend.addItems(["auto", "whisperx", "mlx"])
+        self.audio_filter = QComboBox()
+        self.audio_filter.addItems(["loudnorm", "voice-clean", "none"])
+        self.trim_silence = QCheckBox("Rogner les silences au debut et a la fin")
+        self.force_recompute = QCheckBox("Recalculer sans reutiliser les checkpoints")
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 32)
         self.batch_size.setValue(8)
@@ -236,20 +277,60 @@ class TranscriptionWindow(QMainWindow):
         self.device.addItems(["auto", "cpu", "cuda"])
         self.compute_type = QComboBox()
         self.compute_type.addItems(["auto", "int8", "int8_float16", "float32", "float16"])
-        for widget in (self.model, self.asr_backend, self.batch_size, self.threads, self.device, self.compute_type):
+        for widget in (
+            self.model,
+            self.language,
+            self.asr_backend,
+            self.audio_filter,
+            self.batch_size,
+            self.threads,
+            self.device,
+            self.compute_type,
+        ):
             if hasattr(widget, "currentIndexChanged"):
                 widget.currentIndexChanged.connect(self._refresh_state)
             elif hasattr(widget, "valueChanged"):
                 widget.valueChanged.connect(self._refresh_state)
+        self.trim_silence.stateChanged.connect(self._refresh_state)
+        self.force_recompute.stateChanged.connect(self._refresh_state)
         quality_form.addRow("Modele", self.model)
+        quality_form.addRow("Langue", self.language)
         quality_form.addRow("Backend", self.asr_backend)
+        quality_form.addRow("Filtre audio", self.audio_filter)
+        quality_form.addRow("", self.trim_silence)
+        quality_form.addRow("", self.force_recompute)
         quality_form.addRow("Batch", self.batch_size)
         quality_form.addRow("Threads CPU", self.threads)
         quality_form.addRow("Device", self.device)
         quality_form.addRow("Calcul", self.compute_type)
         self.advanced_group.setVisible(False)
         transcription_form_layout.addWidget(self.advanced_group)
+
+        names_form = QFormLayout()
+        self.speaker_names = QLineEdit()
+        self.speaker_names.setPlaceholderText("SPEAKER_00=Alice,SPEAKER_01=Bruno")
+        self.speaker_names.textChanged.connect(self._refresh_state)
+        names_form.addRow("Noms locuteurs", self.speaker_names)
+        transcription_form_layout.addLayout(names_form)
         transcription_layout.addWidget(transcription_group)
+
+        preflight_group = QGroupBox("Verification avant lancement")
+        preflight_layout = QVBoxLayout(preflight_group)
+        self.preflight_summary = QLabel("Backend recommande: " + self.recommended_backend_label())
+        self.preflight_summary.setObjectName("Stage")
+        preflight_layout.addWidget(self.preflight_summary)
+        self.preflight_output = QTextEdit()
+        self.preflight_output.setReadOnly(True)
+        self.preflight_output.setMaximumHeight(130)
+        self.preflight_output.setPlainText("Lance une verification pour controler .venv, FFmpeg, WhisperX et le token si necessaire.")
+        preflight_layout.addWidget(self.preflight_output)
+        preflight_actions = QHBoxLayout()
+        self.preflight_btn = QPushButton("Verifier configuration")
+        self.preflight_btn.clicked.connect(self.run_preflight)
+        preflight_actions.addWidget(self.preflight_btn)
+        preflight_actions.addStretch(1)
+        preflight_layout.addLayout(preflight_actions)
+        transcription_layout.addWidget(preflight_group)
         transcription_layout.addStretch(1)
 
         transcription_actions = QHBoxLayout()
@@ -344,13 +425,62 @@ class TranscriptionWindow(QMainWindow):
         results_title.setObjectName("ScreenTitle")
         results_screen_layout.addWidget(results_title)
 
+        workspace = QHBoxLayout()
+        workspace.setSpacing(14)
+
+        preview_group = QGroupBox("Apercu")
+        preview_layout = QVBoxLayout(preview_group)
+        self.preview_text = QTextEdit()
+        self.preview_text.setReadOnly(True)
+        self.preview_text.setPlaceholderText("La transcription lisible apparaitra ici apres execution.")
+        preview_layout.addWidget(self.preview_text)
+        workspace.addWidget(preview_group, 2)
+
+        side_panel = QVBoxLayout()
+        speakers_group = QGroupBox("Locuteurs")
+        self.speakers_layout = QVBoxLayout(speakers_group)
+        self.speakers_empty = QLabel("Aucun locuteur detecte.")
+        self.speakers_empty.setObjectName("Muted")
+        self.speakers_layout.addWidget(self.speakers_empty)
+        self.regenerate_btn = QPushButton("Regenerer les fichiers")
+        self.regenerate_btn.setObjectName("Primary")
+        self.regenerate_btn.clicked.connect(self.regenerate_outputs)
+        self.regenerate_btn.setEnabled(False)
+        self.speakers_layout.addWidget(self.regenerate_btn)
+        side_panel.addWidget(speakers_group)
+
+        quick_files_group = QGroupBox("Acces rapide")
+        self.quick_files_layout = QVBoxLayout(quick_files_group)
+        self.quick_files_empty = QLabel("Aucun fichier prioritaire trouve.")
+        self.quick_files_empty.setObjectName("Muted")
+        self.quick_files_layout.addWidget(self.quick_files_empty)
+        side_panel.addWidget(quick_files_group)
+        workspace.addLayout(side_panel, 1)
+        results_screen_layout.addLayout(workspace, 1)
+
         results_group = QGroupBox("Fichiers")
         self.results_layout = QVBoxLayout(results_group)
         self.results_empty = QLabel("Aucun resultat pour l'instant.")
         self.results_empty.setObjectName("Muted")
         self.results_layout.addWidget(self.results_empty)
         results_screen_layout.addWidget(results_group)
-        results_screen_layout.addStretch(1)
+
+        history_group = QGroupBox("Historique")
+        history_layout = QVBoxLayout(history_group)
+        self.history_table = QTableWidget(0, 7)
+        self.history_table.setHorizontalHeaderLabels(["Date", "Audio", "Statut", "Langue", "Modele", "Duree", "Actions"])
+        self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.history_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.history_table.verticalHeader().setVisible(False)
+        self.history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.history_table.setMaximumHeight(260)
+        history_layout.addWidget(self.history_table)
+        refresh_history_btn = QPushButton("Rafraichir l'historique")
+        refresh_history_btn.clicked.connect(self.refresh_history)
+        history_layout.addWidget(refresh_history_btn)
+        results_screen_layout.addWidget(history_group)
 
         results_actions = QHBoxLayout()
         new_audio_btn = QPushButton("Nouvelle transcription")
@@ -381,9 +511,12 @@ class TranscriptionWindow(QMainWindow):
         self.save_token = QCheckBox("Enregistrer dans .env")
         self.show_token = QCheckBox("Afficher")
         self.show_token.stateChanged.connect(self.toggle_token_visibility)
+        self.check_token_btn = QPushButton("Tester le token")
+        self.check_token_btn.clicked.connect(self.check_token)
         token_form.addRow("Token HF", self.hf_token)
         token_form.addRow("", self.save_token)
         token_form.addRow("", self.show_token)
+        token_form.addRow("", self.check_token_btn)
         token_hint = QLabel("Necessaire uniquement si la separation des personnes est activee.")
         token_hint.setObjectName("Muted")
         token_form.addRow("", token_hint)
@@ -494,13 +627,19 @@ class TranscriptionWindow(QMainWindow):
         preset = self._normalize_preset(str(self.settings.value("preset", PRESET_QUALITY)))
         self.preset.setCurrentText(preset)
         self.model.setCurrentText(str(self.settings.value("model", "large-v3")))
+        saved_language = str(self.settings.value("language", "Francais"))
+        self.language.setCurrentText(saved_language if saved_language in LANGUAGES else "Francais")
         self.asr_backend.setCurrentText(str(self.settings.value("asr_backend", "auto")))
+        self.audio_filter.setCurrentText(str(self.settings.value("audio_filter", "loudnorm")))
+        self.trim_silence.setChecked(str(self.settings.value("trim_silence", "false")).lower() == "true")
+        self.force_recompute.setChecked(str(self.settings.value("force_recompute", "false")).lower() == "true")
         self.batch_size.setValue(int(self.settings.value("batch_size", 8)))
         self.threads.setValue(int(self.settings.value("threads", 0)))
         self.speaker_mode.setCurrentText(str(self.settings.value("speaker_mode", "Auto")))
         self.speakers.setValue(int(self.settings.value("speakers", 3)))
         self.min_speakers.setValue(int(self.settings.value("min_speakers", 2)))
         self.max_speakers.setValue(int(self.settings.value("max_speakers", 5)))
+        self.speaker_names.setText(str(self.settings.value("speaker_names", "")))
         saved_diarization = str(self.settings.value("diarization", "true")).lower() == "true"
         self.diarization.setChecked(False if preset == PRESET_NO_SPEAKERS else saved_diarization)
         self.advanced_toggle.setChecked(str(self.settings.value("advanced", "false")).lower() == "true")
@@ -518,13 +657,18 @@ class TranscriptionWindow(QMainWindow):
         self.settings.setValue("diarization", self.diarization.isChecked())
         self.settings.setValue("advanced", self.advanced_toggle.isChecked())
         self.settings.setValue("model", self.model.currentText())
+        self.settings.setValue("language", self.language.currentText())
         self.settings.setValue("asr_backend", self.asr_backend.currentText())
+        self.settings.setValue("audio_filter", self.audio_filter.currentText())
+        self.settings.setValue("trim_silence", self.trim_silence.isChecked())
+        self.settings.setValue("force_recompute", self.force_recompute.isChecked())
         self.settings.setValue("batch_size", self.batch_size.value())
         self.settings.setValue("threads", self.threads.value())
         self.settings.setValue("speaker_mode", self.speaker_mode.currentText())
         self.settings.setValue("speakers", self.speakers.value())
         self.settings.setValue("min_speakers", self.min_speakers.value())
         self.settings.setValue("max_speakers", self.max_speakers.value())
+        self.settings.setValue("speaker_names", self.speaker_names.text().strip())
         if self.save_token.isChecked() and self.hf_token.text().strip():
             ENV_PATH.touch(exist_ok=True)
             set_key(str(ENV_PATH), "HUGGINGFACE_TOKEN", self.hf_token.text().strip())
@@ -550,6 +694,12 @@ class TranscriptionWindow(QMainWindow):
             self.device.setCurrentText("auto")
             self.compute_type.setCurrentText("auto")
             self.diarization.setChecked(False)
+        elif preset == PRESET_AUTO:
+            self.preset.blockSignals(True)
+            self.preset.setCurrentText(recommended_preset())
+            self.preset.blockSignals(False)
+            self._apply_preset()
+            return
         else:
             self.model.setCurrentText("large-v3")
             self.batch_size.setValue(8)
@@ -560,6 +710,86 @@ class TranscriptionWindow(QMainWindow):
 
     def _update_preset_description(self) -> None:
         self.preset_description.setText(PRESET_DESCRIPTIONS.get(self.preset.currentText(), ""))
+
+    def recommended_backend_label(self) -> str:
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            return "MLX sur Apple Silicon si mlx-whisper est installe"
+        if shutil.which("nvidia-smi"):
+            return "CUDA sur GPU NVIDIA"
+        return "CPU avec profil prudent"
+
+    def run_preflight(self) -> None:
+        if self.preflight_process is not None:
+            QMessageBox.warning(self, "Verification", "Une verification est deja en cours.")
+            return
+        python = venv_python()
+        local_checks = [
+            ("venv", python.exists(), str(python)),
+            ("FFmpeg", shutil.which("ffmpeg") is not None, shutil.which("ffmpeg") or "introuvable dans PATH"),
+        ]
+        lines = [f"Backend recommande: {self.recommended_backend_label()}"]
+        for name, ok, detail in local_checks:
+            lines.append(f"{'OK' if ok else 'MANQUANT'} - {name}: {detail}")
+        if not python.exists():
+            lines.append(f"Action: lance {setup_command()} puis relance cette verification.")
+            self.preflight_output.setPlainText("\n".join(lines))
+            return
+
+        self.preflight_output.setPlainText("\n".join(lines + ["Verification des dependances Python..."]))
+        self.preflight_btn.setEnabled(False)
+        self.preflight_process = QProcess(self)
+        self.preflight_process.setProgram(str(python))
+        self.preflight_process.setArguments(["-u", str(TRANSCRIBE), "--doctor"])
+        self.preflight_process.setWorkingDirectory(str(ROOT))
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        self.preflight_process.setProcessEnvironment(env)
+        self.preflight_process.finished.connect(self.preflight_doctor_finished)
+        self.preflight_process.start()
+
+    def preflight_doctor_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        output = ""
+        if self.preflight_process:
+            stdout = bytes(self.preflight_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            stderr = bytes(self.preflight_process.readAllStandardError()).decode("utf-8", errors="replace")
+            output = (stdout + stderr).strip()
+        self.preflight_process = None
+        current = self.preflight_output.toPlainText()
+        self.preflight_output.setPlainText((current + "\n\n" + (output or "Doctor termine.")).strip())
+        if exit_code != 0:
+            self.preflight_btn.setEnabled(True)
+            self.statusBar().showMessage("Verification echouee.")
+            return
+        if self.diarization.isChecked():
+            if not self.hf_token.text().strip():
+                self.preflight_output.append("\nMANQUANT - Token HF requis pour pyannote.")
+                self.preflight_btn.setEnabled(True)
+                return
+            self.preflight_output.append("\nVerification du token HF et des modeles pyannote...")
+            self.preflight_process = QProcess(self)
+            self.preflight_process.setProgram(str(venv_python()))
+            self.preflight_process.setArguments(["-u", str(TRANSCRIBE), "--check-token"])
+            self.preflight_process.setWorkingDirectory(str(ROOT))
+            env = QProcessEnvironment.systemEnvironment()
+            env.insert("PYTHONUNBUFFERED", "1")
+            env.insert("HUGGINGFACE_TOKEN", self.hf_token.text().strip())
+            self.preflight_process.setProcessEnvironment(env)
+            self.preflight_process.finished.connect(self.preflight_token_finished)
+            self.preflight_process.start()
+            return
+        self.preflight_btn.setEnabled(True)
+        self.statusBar().showMessage("Verification terminee.")
+
+    def preflight_token_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        output = ""
+        if self.preflight_process:
+            stdout = bytes(self.preflight_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            stderr = bytes(self.preflight_process.readAllStandardError()).decode("utf-8", errors="replace")
+            output = (stdout + stderr).strip()
+        self.preflight_process = None
+        self.preflight_btn.setEnabled(True)
+        self.preflight_output.append("\n" + (output or "Test token termine."))
+        self.statusBar().showMessage("Verification terminee." if exit_code == 0 else "Verification token echouee.")
 
     def _toggle_advanced(self, *_args) -> None:
         self.advanced_group.setVisible(self.advanced_toggle.isChecked())
@@ -588,6 +818,8 @@ class TranscriptionWindow(QMainWindow):
         self.hf_token.setEnabled(not is_running)
         self.save_token.setEnabled(not is_running)
         self.show_token.setEnabled(not is_running)
+        self.check_token_btn.setEnabled(not is_running and self.token_process is None)
+        self.preflight_btn.setEnabled(not is_running and self.preflight_process is None)
         self.speaker_mode.setEnabled(needs_token and not is_running)
         for widget in (self.speaker_mode_label, self.speaker_mode):
             widget.setVisible(needs_token)
@@ -604,6 +836,7 @@ class TranscriptionWindow(QMainWindow):
         self.max_speakers.setVisible(speaker_range)
         self.max_speakers_label.setVisible(speaker_range)
         self.diarization.setEnabled(not is_running and not no_speakers_preset)
+        self.speaker_names.setEnabled(not is_running)
         self.preset.setEnabled(not is_running)
         self.advanced_toggle.setEnabled(not is_running)
         self.command_toggle.setEnabled(has_audio)
@@ -633,7 +866,7 @@ class TranscriptionWindow(QMainWindow):
 
     def use_latest_input(self) -> None:
         candidates: list[Path] = []
-        for pattern in ("*.m4a", "*.mp3", "*.wav", "*.mp4", "*.webm", "*.flac", "*.ogg"):
+        for pattern in (f"*{suffix}" for suffix in SUPPORTED_AUDIO_EXTENSIONS):
             candidates.extend(INPUT_DIR.rglob(pattern))
         if not candidates:
             QMessageBox.warning(self, "Aucun fichier", f"Aucun fichier audio trouve dans {INPUT_DIR}.")
@@ -643,6 +876,45 @@ class TranscriptionWindow(QMainWindow):
 
     def toggle_token_visibility(self) -> None:
         self.hf_token.setEchoMode(QLineEdit.Normal if self.show_token.isChecked() else QLineEdit.Password)
+
+    def check_token(self) -> None:
+        if self.process is not None or self.token_process is not None:
+            QMessageBox.warning(self, "Process en cours", "Attends la fin du traitement en cours.")
+            return
+        if not self.hf_token.text().strip():
+            QMessageBox.warning(self, "Token HF", "Renseigne un token Hugging Face avant le test.")
+            return
+        python = venv_python()
+        if not python.exists():
+            QMessageBox.critical(self, "Environnement", f"L'environnement .venv est introuvable. Lance {setup_command()}")
+            return
+        self.statusBar().showMessage("Test du token Hugging Face...")
+        self.check_token_btn.setEnabled(False)
+        self.token_process = QProcess(self)
+        self.token_process.setProgram(str(python))
+        self.token_process.setArguments(["-u", str(TRANSCRIBE), "--check-token"])
+        self.token_process.setWorkingDirectory(str(ROOT))
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        env.insert("HUGGINGFACE_TOKEN", self.hf_token.text().strip())
+        self.token_process.setProcessEnvironment(env)
+        self.token_process.finished.connect(self.token_check_finished)
+        self.token_process.start()
+
+    def token_check_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        output = ""
+        if self.token_process:
+            stdout = bytes(self.token_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            stderr = bytes(self.token_process.readAllStandardError()).decode("utf-8", errors="replace")
+            output = (stdout + stderr).strip()
+        self.token_process = None
+        self.check_token_btn.setEnabled(True)
+        if exit_code == 0:
+            self.statusBar().showMessage("Token Hugging Face valide.")
+            QMessageBox.information(self, "Token HF", "Token valide pour pyannote.")
+        else:
+            self.statusBar().showMessage("Token Hugging Face invalide ou non autorise.")
+            QMessageBox.critical(self, "Token HF", output or "Le test du token a echoue.")
 
     def _build_args(self, mask_token: bool = False) -> list[str]:
         args = [
@@ -658,7 +930,9 @@ class TranscriptionWindow(QMainWindow):
             "--asr-backend",
             self.asr_backend.currentText(),
             "--language",
-            "fr",
+            LANGUAGES[self.language.currentText()],
+            "--audio-filter",
+            self.audio_filter.currentText(),
             "--batch-size",
             str(self.batch_size.value()),
             "--threads",
@@ -668,9 +942,13 @@ class TranscriptionWindow(QMainWindow):
             "--compute-type",
             self.compute_type.currentText(),
         ]
+        if self.trim_silence.isChecked():
+            args.append("--trim-silence")
+        if self.force_recompute.isChecked():
+            args.append("--force")
+        if self.speaker_names.text().strip():
+            args.extend(["--speaker-map", self.speaker_names.text().strip()])
         if self.diarization.isChecked():
-            token = "hf_***" if mask_token else self.hf_token.text().strip()
-            args.extend(["--hf-token", token])
             if self.speaker_mode.currentText() == "Nombre exact":
                 args.extend(["--speakers", str(self.speakers.value())])
             elif self.speaker_mode.currentText() == "Fourchette":
@@ -697,8 +975,13 @@ class TranscriptionWindow(QMainWindow):
             )
             if answer != QMessageBox.Yes:
                 return
-        if not PYTHON.exists():
-            QMessageBox.critical(self, "Environnement", "L'environnement .venv est introuvable. Lance .\\setup.ps1.")
+        python = venv_python()
+        if not python.exists():
+            QMessageBox.critical(
+                self,
+                "Environnement",
+                f"L'environnement .venv est introuvable. Lance {setup_command()}",
+            )
             return
 
         self._save_settings()
@@ -709,7 +992,7 @@ class TranscriptionWindow(QMainWindow):
         self.append_log("Commande:\n" + " ".join(self._build_args(mask_token=True)) + "\n")
 
         self.process = QProcess(self)
-        self.process.setProgram(str(PYTHON))
+        self.process.setProgram(str(python))
         self.process.setArguments(["-u", *self._build_args(mask_token=False)])
         self.process.setWorkingDirectory(str(ROOT))
         env = QProcessEnvironment.systemEnvironment()
@@ -745,6 +1028,7 @@ class TranscriptionWindow(QMainWindow):
         if exit_code == 0:
             self.statusBar().showMessage("Termine. Les fichiers sont dans output.")
             self._show_results()
+            self.refresh_history()
             self.tabs.setCurrentIndex(3)
         else:
             self.statusBar().showMessage("Echec. Regarde le journal.")
@@ -763,11 +1047,12 @@ class TranscriptionWindow(QMainWindow):
         if running:
             self.elapsed_seconds = 0
             self.elapsed_label.setText("00:00")
-            self.progress.setRange(0, 0)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(5)
             self.elapsed_timer.start(1000)
         else:
-            self.progress.setRange(0, 1)
-            self.progress.setValue(1 if complete else 0)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100 if complete else 0)
             self.elapsed_timer.stop()
 
     def _tick_elapsed(self) -> None:
@@ -777,41 +1062,62 @@ class TranscriptionWindow(QMainWindow):
 
     def _update_stage_from_log(self, text: str) -> None:
         stages = (
-            ("Preparing clean", "Preparation audio..."),
-            ("Using existing preprocessed WAV", "Audio prepare deja disponible."),
-            ("Loading ASR model", "Chargement du modele..."),
-            ("Transcribing", "Transcription..."),
-            ("Aligning timestamps", "Alignement temporel..."),
-            ("Running speaker diarization", "Separation des locuteurs..."),
-            ("Diarization skipped", "Separation ignoree."),
-            ("Done. Files written", "Ecriture des resultats..."),
+            ("Preparing clean", "Preparation audio...", 10),
+            ("Using existing preprocessed WAV", "Audio prepare deja disponible.", 15),
+            ("Loading ASR model", "Chargement du modele...", 25),
+            ("Transcribing", "Transcription...", 45),
+            ("Aligning timestamps", "Alignement temporel...", 65),
+            ("Running speaker diarization", "Separation des locuteurs...", 82),
+            ("Diarization skipped", "Separation ignoree.", 82),
+            ("Done. Files written", "Ecriture des resultats...", 95),
         )
-        for needle, label in stages:
+        for needle, label, value in stages:
             if needle in text:
                 self.stage_label.setText(label)
+                self.progress.setValue(value)
 
     def _expected_outputs(self) -> list[Path]:
         audio_text = self.audio_path.text().strip()
         if not audio_text:
             return []
-        stem = slugify(Path(audio_text).stem)
-        return [
-            OUTPUT_DIR / f"{stem}.speaker-turns.txt",
-            OUTPUT_DIR / f"{stem}.speaker-turns.md",
-            OUTPUT_DIR / f"{stem}.speaker-segments.srt",
-            OUTPUT_DIR / f"{stem}.segments.json",
-            OUTPUT_DIR / f"{stem}.whisperx.json",
-        ]
+        return expected_output_paths(Path(audio_text), OUTPUT_DIR)
 
-    def _clear_results(self) -> None:
-        while self.results_layout.count():
-            item = self.results_layout.takeAt(0)
+    def _expected_output_by_suffix(self, suffix: str) -> Path | None:
+        for path in self._expected_outputs():
+            if path.name.endswith(suffix):
+                return path
+        return None
+
+    def _clear_layout(self, layout: QVBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
+            child_layout = item.layout()
+            if child_layout:
+                self._clear_layout(child_layout)
+
+    def _clear_results(self) -> None:
+        self._clear_layout(self.results_layout)
         self.results_empty = QLabel("Aucun resultat pour l'instant.")
         self.results_empty.setObjectName("Muted")
         self.results_layout.addWidget(self.results_empty)
+        self._clear_layout(self.speakers_layout)
+        self.speaker_inputs = {}
+        self.speakers_empty = QLabel("Aucun locuteur detecte.")
+        self.speakers_empty.setObjectName("Muted")
+        self.speakers_layout.addWidget(self.speakers_empty)
+        self.regenerate_btn = QPushButton("Regenerer les fichiers")
+        self.regenerate_btn.setObjectName("Primary")
+        self.regenerate_btn.clicked.connect(self.regenerate_outputs)
+        self.regenerate_btn.setEnabled(False)
+        self.speakers_layout.addWidget(self.regenerate_btn)
+        self._clear_layout(self.quick_files_layout)
+        self.quick_files_empty = QLabel("Aucun fichier prioritaire trouve.")
+        self.quick_files_empty.setObjectName("Muted")
+        self.quick_files_layout.addWidget(self.quick_files_empty)
+        self.preview_text.clear()
 
     def _show_results(self) -> None:
         self._clear_results()
@@ -834,6 +1140,255 @@ class TranscriptionWindow(QMainWindow):
             row_layout.addWidget(open_btn)
             row_layout.addWidget(copy_btn)
             self.results_layout.addWidget(row)
+        self._load_preview()
+        self._load_speakers()
+        self._load_quick_files()
+
+    def _load_segments_data(self) -> dict:
+        segments_path = self._expected_output_by_suffix(".segments.json")
+        if not segments_path or not segments_path.exists():
+            return {}
+        try:
+            with segments_path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _load_preview(self) -> None:
+        preview_path = self._expected_output_by_suffix(".speaker-turns.md") or self._expected_output_by_suffix(".clean.txt")
+        if preview_path and preview_path.exists():
+            self.preview_text.setPlainText(preview_path.read_text(encoding="utf-8", errors="replace")[:20000])
+        else:
+            self.preview_text.setPlainText("Aucun apercu disponible.")
+
+    def _load_speakers(self) -> None:
+        data = self._load_segments_data()
+        speakers = sorted(
+            {
+                str(item.get("speaker"))
+                for item in data.get("turns", []) + data.get("segments", [])
+                if item.get("speaker")
+            }
+        )
+        if not speakers:
+            return
+        self._clear_layout(self.speakers_layout)
+        self.speaker_inputs = {}
+        for speaker in speakers:
+            row = QHBoxLayout()
+            label = QLabel(speaker)
+            field = QLineEdit()
+            field.setPlaceholderText(speaker)
+            if not speaker.startswith("SPEAKER_"):
+                field.setText(speaker)
+            row.addWidget(label)
+            row.addWidget(field, 1)
+            self.speakers_layout.addLayout(row)
+            self.speaker_inputs[speaker] = field
+        self.regenerate_btn = QPushButton("Regenerer les fichiers")
+        self.regenerate_btn.setObjectName("Primary")
+        self.regenerate_btn.clicked.connect(self.regenerate_outputs)
+        self.regenerate_btn.setEnabled(True)
+        self.speakers_layout.addWidget(self.regenerate_btn)
+
+    def _load_quick_files(self) -> None:
+        wanted = (
+            (".transcript.docx", "DOCX"),
+            (".speaker-turns.md", "Markdown"),
+            (".speaker-segments.srt", "SRT"),
+        )
+        rows = []
+        for suffix, label in wanted:
+            path = self._expected_output_by_suffix(suffix)
+            if path and path.exists():
+                rows.append((label, path))
+        if not rows:
+            return
+        self._clear_layout(self.quick_files_layout)
+        for label, path in rows:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            open_btn = QPushButton("Ouvrir")
+            open_btn.clicked.connect(lambda _checked=False, p=path: self.open_file(p))
+            row.addWidget(open_btn)
+            self.quick_files_layout.addLayout(row)
+
+    def speaker_map_text_from_fields(self) -> str:
+        items = []
+        for speaker, field in self.speaker_inputs.items():
+            value = field.text().strip()
+            if value and value != speaker:
+                items.append(f"{speaker}={value}")
+        return ",".join(items)
+
+    def regenerate_outputs(self) -> None:
+        speaker_map = self.speaker_map_text_from_fields()
+        if not speaker_map:
+            QMessageBox.information(self, "Locuteurs", "Renseigne au moins un nouveau nom de locuteur.")
+            return
+        audio = self.audio_path.text().strip()
+        if not audio:
+            QMessageBox.warning(self, "Audio", "Aucun fichier audio associe aux resultats.")
+            return
+        python = venv_python()
+        if not python.exists():
+            QMessageBox.critical(self, "Environnement", f"L'environnement .venv est introuvable. Lance {setup_command()}")
+            return
+        if self.regenerate_process is not None:
+            QMessageBox.warning(self, "Regeneration", "Une regeneration est deja en cours.")
+            return
+        self.regenerate_btn.setEnabled(False)
+        self.statusBar().showMessage("Regeneration des exports...")
+        self.regenerate_process = QProcess(self)
+        self.regenerate_process.setProgram(str(python))
+        self.regenerate_process.setArguments(
+            [
+                "-u",
+                str(TRANSCRIBE),
+                "--audio",
+                audio,
+                "--output-dir",
+                str(OUTPUT_DIR),
+                "--work-dir",
+                str(WORK_DIR),
+                "--rename-only",
+                "--speaker-map",
+                speaker_map,
+            ]
+        )
+        self.regenerate_process.setWorkingDirectory(str(ROOT))
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        if self.hf_token.text().strip():
+            env.insert("HUGGINGFACE_TOKEN", self.hf_token.text().strip())
+        self.regenerate_process.setProcessEnvironment(env)
+        self.regenerate_process.finished.connect(self.regenerate_finished)
+        self.regenerate_process.start()
+
+    def regenerate_finished(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        output = ""
+        if self.regenerate_process:
+            stdout = bytes(self.regenerate_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            stderr = bytes(self.regenerate_process.readAllStandardError()).decode("utf-8", errors="replace")
+            output = (stdout + stderr).strip()
+        self.regenerate_process = None
+        self.regenerate_btn.setEnabled(True)
+        if exit_code == 0:
+            self.statusBar().showMessage("Exports regeneres.")
+            self._show_results()
+            self.refresh_history()
+        else:
+            self.statusBar().showMessage("Echec de regeneration.")
+            QMessageBox.critical(self, "Regeneration", output or "La regeneration a echoue.")
+
+    def refresh_history(self) -> None:
+        self.history_records = self.load_history_records()
+        visible_records = self.history_records[-20:][::-1]
+        self.history_table.setRowCount(len(visible_records))
+        for row, record in enumerate(visible_records):
+            values = [
+                self.format_history_date(str(record.get("created_at", ""))),
+                Path(record.get("source_audio", "")).name,
+                str(record.get("status", "")),
+                str(record.get("language", "")),
+                str(record.get("model", "")),
+                self.format_duration(record.get("duration_seconds")),
+            ]
+            for column, value in enumerate(values):
+                self.history_table.setItem(row, column, QTableWidgetItem(value))
+            actions = QWidget()
+            layout = QHBoxLayout(actions)
+            layout.setContentsMargins(0, 0, 0, 0)
+            for label, callback in (
+                ("Ouvrir", self.open_history_record),
+                ("Relancer", self.relaunch_history_record),
+                ("Renommer", self.rename_history_record),
+                ("Supprimer", self.delete_history_record),
+            ):
+                button = QPushButton(label)
+                button.clicked.connect(lambda _checked=False, r=record, cb=callback: cb(r))
+                layout.addWidget(button)
+            self.history_table.setCellWidget(row, 6, actions)
+
+    def load_history_records(self) -> list[dict]:
+        history_path = OUTPUT_DIR / "transcription-history.jsonl"
+        if not history_path.exists():
+            return []
+        records = []
+        with history_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return records
+
+    def write_history_records(self, records: list[dict]) -> None:
+        history_path = OUTPUT_DIR / "transcription-history.jsonl"
+        with history_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def format_history_date(self, value: str) -> str:
+        return value.replace("T", " ").split(".")[0].replace("+00:00", "")
+
+    def format_duration(self, value) -> str:
+        if value is None:
+            return ""
+        try:
+            total = int(round(float(value)))
+        except (TypeError, ValueError):
+            return ""
+        minutes, seconds = divmod(total, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def open_history_record(self, record: dict) -> None:
+        outputs = [Path(path) for path in record.get("outputs", [])]
+        first_existing = next((path for path in outputs if path.exists()), None)
+        if first_existing:
+            self.open_file(first_existing)
+        else:
+            self.open_output()
+
+    def relaunch_history_record(self, record: dict) -> None:
+        audio = Path(record.get("source_audio", ""))
+        if not audio.exists():
+            QMessageBox.warning(self, "Historique", f"Fichier audio introuvable:\n{audio}")
+            return
+        self.audio_path.setText(str(audio))
+        self.model.setCurrentText(str(record.get("model", self.model.currentText())))
+        language = str(record.get("language", "fr"))
+        for label, code in LANGUAGES.items():
+            if code == language:
+                self.language.setCurrentText(label)
+                break
+        self.tabs.setCurrentIndex(2)
+
+    def rename_history_record(self, record: dict) -> None:
+        audio = Path(record.get("source_audio", ""))
+        if not audio.exists():
+            QMessageBox.warning(self, "Historique", f"Fichier audio introuvable:\n{audio}")
+            return
+        self.audio_path.setText(str(audio))
+        self._show_results()
+        self.tabs.setCurrentIndex(3)
+
+    def delete_history_record(self, record: dict) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Supprimer",
+            "Supprimer cette entree d'historique et les fichiers generes encore presents ?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        for output in record.get("outputs", []):
+            Path(output).unlink(missing_ok=True)
+        remaining = [item for item in self.history_records if item is not record]
+        self.write_history_records(remaining)
+        self.refresh_history()
+        self._show_results()
 
     def open_file(self, path: Path) -> None:
         QDesktopServices.openUrl(path.resolve().as_uri())
@@ -848,7 +1403,7 @@ class TranscriptionWindow(QMainWindow):
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if Path(url.toLocalFile()).suffix.lower() in {".m4a", ".mp3", ".wav", ".mp4", ".webm", ".flac", ".ogg"}:
+                if Path(url.toLocalFile()).suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS:
                     event.acceptProposedAction()
                     return
         event.ignore()
@@ -856,7 +1411,7 @@ class TranscriptionWindow(QMainWindow):
     def dropEvent(self, event) -> None:  # type: ignore[override]
         for url in event.mimeData().urls():
             path = Path(url.toLocalFile())
-            if path.suffix.lower() in {".m4a", ".mp3", ".wav", ".mp4", ".webm", ".flac", ".ogg"}:
+            if path.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS:
                 self.audio_path.setText(str(path))
                 event.acceptProposedAction()
                 return

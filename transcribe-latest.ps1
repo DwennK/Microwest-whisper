@@ -3,7 +3,10 @@ param(
     [int]$Speakers = 0,
     [int]$MinSpeakers = 0,
     [int]$MaxSpeakers = 0,
+    [ValidateSet("manual", "auto", "quality", "fast", "cpu", "no-speakers")]
+    [string]$Profile = "manual",
     [string]$Model = "large-v3",
+    [string]$Language = "fr",
     [ValidateSet("auto", "whisperx", "mlx")]
     [string]$AsrBackend = "auto",
     [ValidateSet("auto", "cpu", "cuda")]
@@ -11,6 +14,11 @@ param(
     [ValidateSet("auto", "int8", "int8_float16", "float32", "float16")]
     [string]$ComputeType = "auto",
     [int]$Threads = 0,
+    [ValidateSet("loudnorm", "voice-clean", "none")]
+    [string]$AudioFilter = "loudnorm",
+    [string]$SpeakerMap = "",
+    [switch]$TrimSilence,
+    [switch]$Force,
     [switch]$NoDiarization
 )
 
@@ -28,11 +36,14 @@ Write-Host "Using latest audio file: $($audio.FullName)"
 
 $params = @{
     Audio = $audio.FullName
+    Profile = $Profile
     Model = $Model
+    Language = $Language
     AsrBackend = $AsrBackend
     Device = $Device
     ComputeType = $ComputeType
     Threads = $Threads
+    AudioFilter = $AudioFilter
 }
 
 if ($HfToken) {
@@ -49,6 +60,15 @@ if ($MaxSpeakers -gt 0) {
 }
 if ($NoDiarization) {
     $params.NoDiarization = $true
+}
+if ($SpeakerMap) {
+    $params.SpeakerMap = $SpeakerMap
+}
+if ($TrimSilence) {
+    $params.TrimSilence = $true
+}
+if ($Force) {
+    $params.Force = $true
 }
 
 .\transcribe.ps1 @params
