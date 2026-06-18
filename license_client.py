@@ -115,6 +115,7 @@ def save_success(payload: dict[str, Any], license_key: str) -> dict[str, Any]:
             "product_name": payload.get("productName") or "Microwest Whisper",
             "product_slug": payload.get("productSlug") or "microwest-whisper",
             "release_url": payload.get("releaseUrl") or "",
+            "subscription_status": payload.get("subscriptionStatus") or "",
             "valid_until": payload.get("validUntil") or "",
             "last_validated_at": now_utc().isoformat(),
             "machine_id": machine_id(),
@@ -196,7 +197,8 @@ def license_status_text(state: dict[str, Any] | None = None) -> str:
     valid_until = str(state.get("valid_until") or "")
     parsed = parse_datetime(valid_until)
     if parsed and parsed > now_utc():
-        return f"Licence valide jusqu'au {parsed.astimezone().strftime('%d.%m.%Y %H:%M')}."
+        subscription_status = str(state.get("subscription_status") or "active")
+        return f"Abonnement {subscription_status}. Licence valide jusqu'au {parsed.astimezone().strftime('%d.%m.%Y %H:%M')}."
     return "Licence à vérifier en ligne."
 
 
@@ -206,6 +208,7 @@ def license_error_message(reason: str) -> str:
         "revoked": "Licence révoquée.",
         "activation_limit_reached": "Nombre d'activations atteint.",
         "not_activated": "Licence non activée sur cette machine.",
+        "subscription_inactive": "Abonnement inactif ou paiement non à jour.",
         "missing_fields": "Demande de licence incomplète.",
         "server_error": "Erreur serveur pendant la vérification.",
     }
