@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHeaderView,
     QAbstractItemView,
+    QButtonGroup,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -121,7 +122,7 @@ class TranscriptionWindow(QMainWindow):
         WORK_DIR.mkdir(exist_ok=True)
 
         self.setWindowTitle("Microwest Whisper")
-        self.setMinimumSize(1080, 760)
+        self.setMinimumSize(1180, 780)
         self.setAcceptDrops(True)
         self.elapsed_timer = QTimer(self)
         self.elapsed_timer.timeout.connect(self._tick_elapsed)
@@ -139,7 +140,7 @@ class TranscriptionWindow(QMainWindow):
         app_bar = QFrame()
         app_bar.setObjectName("AppBar")
         header = QHBoxLayout(app_bar)
-        header.setContentsMargins(22, 16, 22, 16)
+        header.setContentsMargins(22, 14, 22, 14)
         header.setSpacing(14)
 
         brand_mark = QLabel("MW")
@@ -151,40 +152,56 @@ class TranscriptionWindow(QMainWindow):
         title_wrap.setSpacing(2)
         title = QLabel("Microwest Whisper")
         title.setObjectName("AppTitle")
-        subtitle = QLabel("Transcription locale, diarisation et exports prêts à livrer.")
+        subtitle = QLabel("Console professionnelle de transcription locale, diarisation et livrables client.")
         subtitle.setObjectName("AppSubtitle")
         title_wrap.addWidget(title)
         title_wrap.addWidget(subtitle)
         header.addLayout(title_wrap)
         header.addStretch(1)
 
-        self.open_input_btn = QPushButton("Input")
+        product_badge = QLabel("Edition Pro locale")
+        product_badge.setObjectName("ProductBadge")
+        header.addWidget(product_badge)
+
+        self.open_input_btn = QPushButton("Dossier input")
         self.open_input_btn.setObjectName("CommandButton")
         self.open_input_btn.clicked.connect(lambda: self.open_folder(INPUT_DIR))
         header.addWidget(self.open_input_btn)
-        self.open_output_btn = QPushButton("Output")
+        self.open_output_btn = QPushButton("Dossier output")
         self.open_output_btn.setObjectName("CommandButton")
         self.open_output_btn.clicked.connect(self.open_output)
         header.addWidget(self.open_output_btn)
         root.addWidget(app_bar)
 
+        shell = QFrame()
+        shell.setObjectName("Shell")
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.North)
-        root.addWidget(self.tabs, 1)
+        shell_layout.addWidget(self._build_navigation(), 0)
+        shell_layout.addWidget(self.tabs, 1)
+        root.addWidget(shell, 1)
 
         audio_screen = QWidget()
         audio_layout = QVBoxLayout(audio_screen)
-        audio_layout.setContentsMargins(18, 18, 18, 18)
-        audio_layout.setSpacing(16)
+        audio_layout.setContentsMargins(24, 22, 24, 22)
+        audio_layout.setSpacing(18)
 
         self._add_page_header(
             audio_layout,
-            "Étape 1",
-            "Choisir l'audio",
-            "Sélectionne un fichier source ou prends automatiquement le plus récent dans input.",
+            "Boîte de réception",
+            "Source audio",
+            "Importe un enregistrement client ou récupère automatiquement le plus récent dans input.",
         )
 
-        file_group = QGroupBox("Source audio")
+        audio_workspace = QHBoxLayout()
+        audio_workspace.setSpacing(16)
+
+        file_group = QGroupBox("Déposer ou choisir un enregistrement")
+        file_group.setObjectName("PrimaryPanel")
         file_layout = QGridLayout(file_group)
         file_layout.setHorizontalSpacing(12)
         file_layout.setVerticalSpacing(10)
@@ -206,7 +223,60 @@ class TranscriptionWindow(QMainWindow):
         file_hint = QLabel("Astuce: tu peux aussi glisser-déposer un fichier audio dans la fenêtre.")
         file_hint.setObjectName("Muted")
         file_layout.addWidget(file_hint, 1, 1, 1, 3)
-        audio_layout.addWidget(file_group)
+        audio_workspace.addWidget(file_group, 2)
+
+        delivery_group = QGroupBox("Livrables client")
+        delivery_layout = QVBoxLayout(delivery_group)
+        delivery_layout.setSpacing(10)
+        delivery_intro = QLabel("La sortie est préparée pour relecture, renommage des locuteurs et livraison.")
+        delivery_intro.setWordWrap(True)
+        delivery_intro.setObjectName("Muted")
+        delivery_layout.addWidget(delivery_intro)
+        for title_text, detail_text in (
+            ("DOCX propre", "Document lisible à transmettre."),
+            ("Markdown", "Compte-rendu éditable rapidement."),
+            ("SRT", "Sous-titres exploitables après diarisation."),
+        ):
+            item = QFrame()
+            item.setObjectName("DeliveryItem")
+            item_layout = QVBoxLayout(item)
+            item_layout.setContentsMargins(10, 8, 10, 8)
+            item_layout.setSpacing(2)
+            item_title = QLabel(title_text)
+            item_title.setObjectName("MiniTitle")
+            item_detail = QLabel(detail_text)
+            item_detail.setObjectName("Muted")
+            item_detail.setWordWrap(True)
+            item_layout.addWidget(item_title)
+            item_layout.addWidget(item_detail)
+            delivery_layout.addWidget(item)
+        delivery_layout.addStretch(1)
+        audio_workspace.addWidget(delivery_group, 1)
+        audio_layout.addLayout(audio_workspace)
+
+        workflow_group = QGroupBox("Flux de production")
+        workflow_layout = QHBoxLayout(workflow_group)
+        workflow_layout.setSpacing(10)
+        for step_title, step_detail in (
+            ("1. Import", "Audio source ou dernier fichier input."),
+            ("2. Configuration", "Profil qualité, langue et locuteurs."),
+            ("3. Traitement", "Progression et journal visibles."),
+            ("4. Livraison", "DOCX, Markdown, SRT et historique."),
+        ):
+            step = QFrame()
+            step.setObjectName("PipelineStep")
+            step_layout = QVBoxLayout(step)
+            step_layout.setContentsMargins(12, 10, 12, 10)
+            step_layout.setSpacing(3)
+            title_label = QLabel(step_title)
+            title_label.setObjectName("MiniTitle")
+            detail_label = QLabel(step_detail)
+            detail_label.setObjectName("Muted")
+            detail_label.setWordWrap(True)
+            step_layout.addWidget(title_label)
+            step_layout.addWidget(detail_label)
+            workflow_layout.addWidget(step, 1)
+        audio_layout.addWidget(workflow_group)
         audio_layout.addStretch(1)
 
         audio_actions = QHBoxLayout()
@@ -225,9 +295,9 @@ class TranscriptionWindow(QMainWindow):
 
         self._add_page_header(
             transcription_layout,
-            "Étape 2",
-            "Régler la transcription",
-            "Choisis le profil, la diarisation et les contrôles utiles avant de lancer.",
+            "Configuration",
+            "Profil de transcription",
+            "Choisis le niveau de qualité, la diarisation et les contrôles avant lancement.",
         )
 
         self.settings_hint = QLabel("")
@@ -427,9 +497,9 @@ class TranscriptionWindow(QMainWindow):
 
         self._add_page_header(
             execution_layout,
-            "Étape 3",
-            "Lancer et suivre",
-            "Démarre le traitement et garde les logs visibles pendant toute l'exécution.",
+            "Traitement",
+            "Exécution",
+            "Démarre la transcription et suis l'avancement sans quitter le poste de travail.",
         )
 
         self.execution_hint = QLabel("")
@@ -502,9 +572,9 @@ class TranscriptionWindow(QMainWindow):
 
         self._add_page_header(
             results_screen_layout,
-            "Étape 4",
-            "Récupérer les résultats",
-            "Relis, renomme les locuteurs et ouvre directement les exports de livraison.",
+            "Livraison",
+            "Exports et historique",
+            "Relis, renomme les locuteurs et ouvre directement les fichiers prêts à livrer.",
         )
 
         workspace = QHBoxLayout()
@@ -586,7 +656,7 @@ class TranscriptionWindow(QMainWindow):
 
         self._add_page_header(
             settings_layout,
-            "Paramètres",
+            "Administration",
             "Licence et accès",
             "Active la licence Microwest Whisper et ajoute un token Hugging Face seulement si la séparation des locuteurs est activée.",
         )
@@ -637,31 +707,39 @@ class TranscriptionWindow(QMainWindow):
         settings_actions.addWidget(settings_back_btn)
         settings_layout.addLayout(settings_actions)
         self._add_scroll_tab(settings_screen, "Paramètres")
+        self.tabs.tabBar().hide()
+        self.tabs.currentChanged.connect(self._sync_nav)
+        self._sync_nav(self.tabs.currentIndex())
 
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
 
         self.setStyleSheet(
             """
-            QMainWindow { background: #eef2f7; }
+            QWidget {
+                font-family: "Segoe UI", "SF Pro Text", Arial;
+                font-size: 13px;
+                color: #172033;
+            }
+            QMainWindow { background: #f4f7fb; }
             QMenuBar {
                 background: #ffffff;
-                border-bottom: 1px solid #d8dee8;
+                border-bottom: 1px solid #dfe5ef;
                 color: #1f2937;
             }
             QFrame#AppBar {
-                background: #0f3b67;
-                border-bottom: 1px solid #092742;
+                background: #0f6cbd;
+                border-bottom: 1px solid #095a9f;
             }
             QLabel#BrandMark {
                 min-width: 38px;
                 min-height: 38px;
                 max-width: 38px;
                 max-height: 38px;
-                border: 1px solid rgba(255, 255, 255, 0.45);
-                border-radius: 6px;
+                border: 1px solid rgba(255, 255, 255, 0.48);
+                border-radius: 4px;
                 color: #ffffff;
-                background: #0f6cbd;
+                background: #074a86;
                 font-size: 13px;
                 font-weight: 800;
             }
@@ -671,11 +749,69 @@ class TranscriptionWindow(QMainWindow):
                 font-weight: 800;
             }
             QLabel#AppSubtitle {
-                color: #cfe5ff;
+                color: #d8ebff;
                 font-size: 12px;
             }
+            QLabel#ProductBadge {
+                color: #ffffff;
+                background: rgba(255, 255, 255, 0.16);
+                border: 1px solid rgba(255, 255, 255, 0.28);
+                border-radius: 4px;
+                padding: 7px 10px;
+                font-weight: 700;
+            }
+            QFrame#Shell {
+                background: #f4f7fb;
+            }
+            QFrame#NavigationRail {
+                background: #f8fafc;
+                border-right: 1px solid #dce3ee;
+            }
+            QLabel#NavTitle {
+                color: #172033;
+                font-size: 16px;
+                font-weight: 800;
+            }
+            QLabel#NavHint {
+                color: #64748b;
+                font-size: 12px;
+            }
+            QLabel#NavSection {
+                color: #64748b;
+                font-size: 11px;
+                font-weight: 800;
+                margin-top: 14px;
+                margin-bottom: 2px;
+            }
+            QPushButton#NavButton {
+                border: none;
+                border-left: 3px solid transparent;
+                border-radius: 4px;
+                background: transparent;
+                color: #253246;
+                text-align: left;
+                padding: 8px 12px;
+                font-weight: 700;
+            }
+            QPushButton#NavButton:hover {
+                background: #edf5fd;
+            }
+            QPushButton#NavButton:checked {
+                background: #e5f1fb;
+                border-left-color: #0f6cbd;
+                color: #0b5da8;
+            }
+            QFrame#NavStatus {
+                background: #ffffff;
+                border: 1px solid #dce3ee;
+                border-radius: 6px;
+            }
             QLabel#Muted { color: #65758b; }
-            QLabel#Stage { font-weight: 700; color: #263548; }
+            QLabel#MiniTitle {
+                color: #243246;
+                font-weight: 800;
+            }
+            QLabel#Stage { font-weight: 700; color: #243246; }
             QLabel#FieldLabel {
                 color: #253246;
                 font-weight: 800;
@@ -687,8 +823,8 @@ class TranscriptionWindow(QMainWindow):
                 font-weight: 800;
             }
             QLabel#ScreenTitle {
-                color: #111827;
-                font-size: 22px;
+                color: #172033;
+                font-size: 23px;
                 font-weight: 800;
             }
             QLabel#Warning {
@@ -696,56 +832,54 @@ class TranscriptionWindow(QMainWindow):
                 font-weight: 600;
                 background: #fff7ed;
                 border: 1px solid #fed7aa;
-                border-radius: 5px;
+                border-radius: 4px;
                 padding: 8px 10px;
             }
             QFrame#PageHeader {
                 background: transparent;
                 border: none;
+                border-bottom: 1px solid #e0e7f0;
+            }
+            QFrame#DeliveryItem {
+                background: #f8fbff;
+                border: 1px solid #e0e8f4;
+                border-radius: 5px;
+            }
+            QFrame#PipelineStep {
+                background: #f8fbff;
+                border: 1px solid #e0e8f4;
+                border-radius: 5px;
+            }
+            QScrollArea {
+                background: transparent;
+                border: none;
             }
             QTabWidget::pane {
-                border: 1px solid #cfd8e3;
-                border-left: none;
-                border-right: none;
-                border-bottom: none;
-                background: #ffffff;
-                top: -2px;
-            }
-            QTabBar::tab {
-                border: 1px solid #d6dee9;
-                border-bottom: none;
-                padding: 10px 18px;
-                margin-right: 2px;
+                border: none;
                 background: #f4f7fb;
-                color: #344256;
-            }
-            QTabBar::tab:selected {
-                background: #ffffff;
-                color: #0f6cbd;
-                border-top: 3px solid #0f6cbd;
-                font-weight: 800;
-            }
-            QTabBar::tab:hover:!selected {
-                background: #eaf2fb;
             }
             QGroupBox {
-                border: 1px solid #d7dee8;
-                border-radius: 7px;
+                border: 1px solid #dce3ee;
+                border-radius: 6px;
                 margin-top: 14px;
-                padding: 15px;
+                padding: 18px;
+                background: #ffffff;
+            }
+            QGroupBox#PrimaryPanel {
+                border-color: #b9d8f4;
                 background: #ffffff;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 12px;
                 padding: 0 6px;
-                color: #263548;
+                color: #243246;
                 font-weight: 800;
             }
             QLineEdit, QTextEdit {
                 border: 1px solid #c9d3df;
-                border-radius: 5px;
-                padding: 3px 8px;
+                border-radius: 4px;
+                padding: 5px 8px;
                 background: #ffffff;
                 color: #172033;
                 selection-background-color: #0f6cbd;
@@ -759,7 +893,7 @@ class TranscriptionWindow(QMainWindow):
                 font-family: Consolas, Menlo, monospace;
             }
             QTextEdit#Console {
-                background: #0f172a;
+                background: #111827;
                 color: #dbeafe;
                 border-color: #1e293b;
                 font-family: Consolas, Menlo, monospace;
@@ -779,10 +913,16 @@ class TranscriptionWindow(QMainWindow):
                 min-height: 34px;
                 color: #172033;
                 background: #ffffff;
+                border: 1px solid #c9d3df;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QComboBox:focus, QSpinBox:focus {
+                border-color: #0f6cbd;
             }
             QPushButton {
                 border: 1px solid #b8c4d3;
-                border-radius: 5px;
+                border-radius: 4px;
                 padding: 8px 13px;
                 background: #ffffff;
                 color: #172033;
@@ -810,7 +950,7 @@ class TranscriptionWindow(QMainWindow):
                 background: rgba(255, 255, 255, 0.10);
                 color: #ffffff;
                 border-color: rgba(255, 255, 255, 0.28);
-                min-width: 74px;
+                min-width: 104px;
             }
             QPushButton#CommandButton:hover {
                 background: rgba(255, 255, 255, 0.18);
@@ -824,7 +964,7 @@ class TranscriptionWindow(QMainWindow):
                 width: 16px;
                 height: 16px;
                 border: 1px solid #b8c4d3;
-                border-radius: 4px;
+                border-radius: 3px;
                 background: #ffffff;
             }
             QCheckBox::indicator:checked {
@@ -837,20 +977,23 @@ class TranscriptionWindow(QMainWindow):
             }
             QProgressBar {
                 border: 1px solid #cbd5e1;
-                border-radius: 5px;
-                height: 12px;
+                border-radius: 4px;
+                height: 11px;
                 background: #f8fafc;
                 text-align: center;
             }
             QProgressBar::chunk {
-                border-radius: 4px;
-                background: #22a06b;
+                border-radius: 3px;
+                background: #107c41;
             }
             QTableWidget {
                 gridline-color: #e4eaf2;
                 alternate-background-color: #f8fafc;
                 selection-background-color: #dbeafe;
                 selection-color: #172033;
+                background: #ffffff;
+                border: 1px solid #dce3ee;
+                border-radius: 4px;
             }
             QHeaderView::section {
                 background: #f3f6fa;
@@ -860,8 +1003,79 @@ class TranscriptionWindow(QMainWindow):
                 padding: 7px;
                 font-weight: 800;
             }
+            QStatusBar {
+                background: #ffffff;
+                border-top: 1px solid #dce3ee;
+                color: #475569;
+            }
             """
         )
+
+    def _build_navigation(self) -> QFrame:
+        navigation = QFrame()
+        navigation.setObjectName("NavigationRail")
+        navigation.setFixedWidth(236)
+        layout = QVBoxLayout(navigation)
+        layout.setContentsMargins(14, 18, 14, 18)
+        layout.setSpacing(8)
+
+        workspace_title = QLabel("Poste de travail")
+        workspace_title.setObjectName("NavTitle")
+        layout.addWidget(workspace_title)
+
+        workspace_hint = QLabel("Flux client de l'import à la livraison.")
+        workspace_hint.setObjectName("NavHint")
+        workspace_hint.setWordWrap(True)
+        layout.addWidget(workspace_hint)
+
+        section = QLabel("Navigation")
+        section.setObjectName("NavSection")
+        layout.addWidget(section)
+
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        self.nav_buttons: list[QPushButton] = []
+        for index, (title, detail) in enumerate(
+            (
+                ("Audio", "Importer"),
+                ("Réglages", "Configurer"),
+                ("Exécution", "Suivre"),
+                ("Résultats", "Livrer"),
+                ("Paramètres", "Administrer"),
+            )
+        ):
+            button = QPushButton(f"{title}\n{detail}")
+            button.setObjectName("NavButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(54)
+            button.clicked.connect(lambda _checked=False, tab_index=index: self.tabs.setCurrentIndex(tab_index))
+            self.nav_group.addButton(button, index)
+            self.nav_buttons.append(button)
+            layout.addWidget(button)
+
+        layout.addStretch(1)
+
+        status_panel = QFrame()
+        status_panel.setObjectName("NavStatus")
+        status_layout = QVBoxLayout(status_panel)
+        status_layout.setContentsMargins(12, 12, 12, 12)
+        status_layout.setSpacing(4)
+        status_title = QLabel("Mode local")
+        status_title.setObjectName("MiniTitle")
+        status_body = QLabel("Les fichiers restent sur le poste. Les exports sont écrits dans output.")
+        status_body.setObjectName("NavHint")
+        status_body.setWordWrap(True)
+        status_layout.addWidget(status_title)
+        status_layout.addWidget(status_body)
+        layout.addWidget(status_panel)
+
+        return navigation
+
+    def _sync_nav(self, index: int) -> None:
+        for button_index, button in enumerate(getattr(self, "nav_buttons", [])):
+            button.blockSignals(True)
+            button.setChecked(button_index == index)
+            button.blockSignals(False)
 
     def _add_page_header(self, layout: QVBoxLayout, eyebrow: str, title: str, description: str) -> None:
         header = QFrame()
