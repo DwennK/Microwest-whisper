@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from transcript_paths import SUPPORTED_AUDIO_EXTENSIONS, expected_output_paths
+from license_client import activate_license, cached_license_valid, license_status_text, read_state, validate_license
 
 
 ROOT = Path(__file__).resolve().parent
@@ -110,6 +112,9 @@ class TranscriptionWindow(QMainWindow):
         self.history_records: list[dict] = []
         self.speaker_inputs: dict[str, QLineEdit] = {}
         self.elapsed_seconds = 0
+        self.ffmpeg_duration_seconds = 0.0
+        self.progress_floor = 0
+        self.progress_ceiling = 100
         self.settings = QSettings("Codex", "WhisperLocalTranscriber")
         INPUT_DIR.mkdir(exist_ok=True)
         OUTPUT_DIR.mkdir(exist_ok=True)
@@ -236,6 +241,11 @@ class TranscriptionWindow(QMainWindow):
         transcription_form_layout = QVBoxLayout(transcription_group)
         transcription_form_layout.setSpacing(8)
 
+        speaker_group = QGroupBox("Séparation des personnes")
+        speaker_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        speaker_layout = QVBoxLayout(speaker_group)
+        speaker_layout.setSpacing(8)
+
         profile_label = QLabel("Profil")
         profile_label.setObjectName("FieldLabel")
         self.preset = QComboBox()
@@ -252,11 +262,15 @@ class TranscriptionWindow(QMainWindow):
         transcription_form_layout.addWidget(self.preset_description)
         transcription_form_layout.addSpacing(4)
 
+        self.advanced_toggle = QCheckBox("Afficher les réglages avancés")
+        self.advanced_toggle.stateChanged.connect(self._toggle_advanced)
+        transcription_form_layout.addWidget(self.advanced_toggle)
+
         self.diarization = QCheckBox("Séparer les personnes")
-        self.diarization.setChecked(True)
+        self.diarization.setChecked(False)
         self.diarization.stateChanged.connect(self._refresh_state)
-        transcription_form_layout.addWidget(self.diarization)
-        transcription_form_layout.addSpacing(6)
+        speaker_layout.addWidget(self.diarization)
+        speaker_layout.addSpacing(6)
 
         self.speaker_mode = QComboBox()
         self.speaker_mode.addItems(["Auto", "Nombre exact", "Fourchette"])
@@ -264,43 +278,43 @@ class TranscriptionWindow(QMainWindow):
         self.speaker_mode.currentIndexChanged.connect(self._refresh_state)
         self.speaker_mode_label = QLabel("Locuteurs")
         self.speaker_mode_label.setObjectName("FieldLabel")
-        transcription_form_layout.addWidget(self.speaker_mode_label)
-        transcription_form_layout.addWidget(self.speaker_mode)
-        transcription_form_layout.addSpacing(8)
+        speaker_layout.addWidget(self.speaker_mode_label)
+        speaker_layout.addWidget(self.speaker_mode)
+        speaker_layout.addSpacing(8)
 
         self.speakers = QSpinBox()
         self.speakers.setRange(1, 20)
         self.speakers.setValue(3)
         self.speakers_label = QLabel("Exact")
         self.speakers_label.setObjectName("FieldLabel")
-        transcription_form_layout.addWidget(self.speakers_label)
-        transcription_form_layout.addWidget(self.speakers)
+        speaker_layout.addWidget(self.speakers_label)
+        speaker_layout.addWidget(self.speakers)
 
         self.min_speakers = QSpinBox()
         self.min_speakers.setRange(1, 20)
         self.min_speakers.setValue(2)
         self.min_speakers_label = QLabel("Minimum")
         self.min_speakers_label.setObjectName("FieldLabel")
-        transcription_form_layout.addWidget(self.min_speakers_label)
-        transcription_form_layout.addWidget(self.min_speakers)
+        speaker_layout.addWidget(self.min_speakers_label)
+        speaker_layout.addWidget(self.min_speakers)
 
         self.max_speakers = QSpinBox()
         self.max_speakers.setRange(1, 20)
         self.max_speakers.setValue(5)
         self.max_speakers_label = QLabel("Maximum")
         self.max_speakers_label.setObjectName("FieldLabel")
-        transcription_form_layout.addWidget(self.max_speakers_label)
-        transcription_form_layout.addWidget(self.max_speakers)
+        speaker_layout.addWidget(self.max_speakers_label)
+        speaker_layout.addWidget(self.max_speakers)
 
         self.speaker_names = QLineEdit()
         self.speaker_names.setPlaceholderText("SPEAKER_00=Alice,SPEAKER_01=Bruno")
         self.speaker_names.setMinimumWidth(420)
         self.speaker_names.textChanged.connect(self._refresh_state)
-        speaker_names_label = QLabel("Noms locuteurs")
-        speaker_names_label.setObjectName("FieldLabel")
-        transcription_form_layout.addWidget(speaker_names_label)
-        transcription_form_layout.addWidget(self.speaker_names)
-        transcription_form_layout.addSpacing(8)
+        self.speaker_names_label = QLabel("Noms locuteurs")
+        self.speaker_names_label.setObjectName("FieldLabel")
+        speaker_layout.addWidget(self.speaker_names_label)
+        speaker_layout.addWidget(self.speaker_names)
+        speaker_layout.addSpacing(8)
         for field in (
             self.preset,
             self.speaker_mode,
@@ -310,11 +324,7 @@ class TranscriptionWindow(QMainWindow):
             self.speaker_names,
         ):
             field.setMinimumHeight(32)
-        transcription_form_layout.addSpacing(8)
-
-        self.advanced_toggle = QCheckBox("Afficher les réglages avancés")
-        self.advanced_toggle.stateChanged.connect(self._toggle_advanced)
-        transcription_form_layout.addWidget(self.advanced_toggle)
+        speaker_layout.addStretch(1)
 
         self.advanced_group = QGroupBox("Réglages avancés")
         quality_form = QFormLayout(self.advanced_group)
@@ -387,11 +397,12 @@ class TranscriptionWindow(QMainWindow):
         preflight_actions.addStretch(1)
         preflight_layout.addLayout(preflight_actions)
 
-        transcription_workspace = QHBoxLayout()
-        transcription_workspace.setSpacing(16)
-        transcription_workspace.addWidget(transcription_group, 3, Qt.AlignTop)
-        transcription_workspace.addWidget(preflight_group, 2, Qt.AlignTop)
-        transcription_layout.addLayout(transcription_workspace)
+        options_workspace = QHBoxLayout()
+        options_workspace.setSpacing(16)
+        options_workspace.addWidget(transcription_group, 1, Qt.AlignTop)
+        options_workspace.addWidget(speaker_group, 1, Qt.AlignTop)
+        transcription_layout.addLayout(options_workspace)
+        transcription_layout.addWidget(preflight_group)
         transcription_layout.addWidget(self.advanced_group)
 
         transcription_actions = QHBoxLayout()
@@ -576,9 +587,27 @@ class TranscriptionWindow(QMainWindow):
         self._add_page_header(
             settings_layout,
             "Paramètres",
-            "Hugging Face",
-            "Ajoute un token uniquement si la séparation des locuteurs est activée.",
+            "Licence et accès",
+            "Active la licence Microwest Whisper et ajoute un token Hugging Face seulement si la séparation des locuteurs est activée.",
         )
+
+        license_group = QGroupBox("Licence Microwest Whisper")
+        license_form = QFormLayout(license_group)
+        self.license_key = QLineEdit()
+        self.license_key.setPlaceholderText("MW-XXXXX-XXXXX-XXXXX-XXXXX")
+        self.license_key.textChanged.connect(self._refresh_state)
+        self.license_status = QLabel("")
+        self.license_status.setObjectName("Muted")
+        self.license_status.setWordWrap(True)
+        self.activate_license_btn = QPushButton("Activer la licence")
+        self.activate_license_btn.clicked.connect(self.activate_product_license)
+        self.validate_license_btn = QPushButton("Vérifier la licence")
+        self.validate_license_btn.clicked.connect(self.validate_product_license)
+        license_form.addRow("Clé", self.license_key)
+        license_form.addRow("Statut", self.license_status)
+        license_form.addRow("", self.activate_license_btn)
+        license_form.addRow("", self.validate_license_btn)
+        settings_layout.addWidget(license_group)
 
         token_group = QGroupBox("Hugging Face")
         token_form = QFormLayout(token_group)
@@ -866,6 +895,9 @@ class TranscriptionWindow(QMainWindow):
         env_values = dotenv_values(ENV_PATH) if ENV_PATH.exists() else {}
         token = env_values.get("HUGGINGFACE_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN", "")
         self.hf_token.setText(token)
+        license_state = read_state()
+        self.license_key.setText(str(license_state.get("license_key") or ""))
+        self.license_status.setText(license_status_text(license_state))
         self.audio_path.setText(str(self.settings.value("audio_path", "")))
         preset = self._normalize_preset(str(self.settings.value("preset", PRESET_QUALITY)))
         self.preset.setCurrentText(preset)
@@ -883,11 +915,41 @@ class TranscriptionWindow(QMainWindow):
         self.min_speakers.setValue(int(self.settings.value("min_speakers", 2)))
         self.max_speakers.setValue(int(self.settings.value("max_speakers", 5)))
         self.speaker_names.setText(str(self.settings.value("speaker_names", "")))
-        saved_diarization = str(self.settings.value("diarization", "true")).lower() == "true"
+        saved_diarization = str(self.settings.value("diarization", "false")).lower() == "true"
         self.diarization.setChecked(False if preset == PRESET_NO_SPEAKERS else saved_diarization)
         self.advanced_toggle.setChecked(str(self.settings.value("advanced", "false")).lower() == "true")
         self._update_preset_description()
         self._toggle_advanced()
+
+    def activate_product_license(self) -> None:
+        try:
+            result = activate_license(self.license_key.text().strip())
+        except Exception as exc:
+            QMessageBox.critical(self, "Licence", f"Activation impossible:\n{exc}")
+            return
+
+        self.license_status.setText(license_status_text(result.state))
+        if result.state.get("license_key"):
+            self.license_key.setText(str(result.state.get("license_key")))
+        self._refresh_state()
+        if result.ok:
+            QMessageBox.information(self, "Licence", result.message)
+        else:
+            QMessageBox.warning(self, "Licence", result.message)
+
+    def validate_product_license(self) -> None:
+        try:
+            result = validate_license(force_online=True)
+        except Exception as exc:
+            QMessageBox.critical(self, "Licence", f"Vérification impossible:\n{exc}")
+            return
+
+        self.license_status.setText(license_status_text(result.state))
+        self._refresh_state()
+        if result.ok:
+            QMessageBox.information(self, "Licence", result.message)
+        else:
+            QMessageBox.warning(self, "Licence", result.message)
 
     def _normalize_preset(self, value: str) -> str:
         if value in PRESET_LABELS:
@@ -924,13 +986,11 @@ class TranscriptionWindow(QMainWindow):
             self.batch_size.setValue(12)
             self.device.setCurrentText("auto")
             self.compute_type.setCurrentText("auto")
-            self.diarization.setChecked(True)
         elif preset == PRESET_CPU:
             self.model.setCurrentText("medium")
             self.batch_size.setValue(4)
             self.device.setCurrentText("cpu")
             self.compute_type.setCurrentText("int8")
-            self.diarization.setChecked(True)
         elif preset == PRESET_NO_SPEAKERS:
             self.model.setCurrentText("large-v3")
             self.batch_size.setValue(8)
@@ -948,7 +1008,6 @@ class TranscriptionWindow(QMainWindow):
             self.batch_size.setValue(8)
             self.device.setCurrentText("auto")
             self.compute_type.setCurrentText("auto")
-            self.diarization.setChecked(True)
         self._refresh_state()
 
     def _update_preset_description(self) -> None:
@@ -1053,11 +1112,17 @@ class TranscriptionWindow(QMainWindow):
         needs_token = self.diarization.isChecked()
         has_token = bool(self.hf_token.text().strip())
         is_running = self.process is not None
+        license_state = read_state()
+        has_license = cached_license_valid(license_state)
 
-        self.start_btn.setEnabled(has_audio and (not needs_token or has_token) and not is_running)
+        self.start_btn.setEnabled(has_audio and has_license and (not needs_token or has_token) and not is_running)
         self.stop_btn.setEnabled(is_running)
         self.next_audio_btn.setEnabled(has_audio and not is_running)
         self.next_transcription_btn.setEnabled(has_audio and not is_running)
+        self.license_key.setEnabled(not is_running)
+        self.activate_license_btn.setEnabled(not is_running and bool(self.license_key.text().strip()))
+        self.validate_license_btn.setEnabled(not is_running and bool(license_state.get("license_key")))
+        self.license_status.setText(license_status_text(license_state))
         self.hf_token.setEnabled(not is_running)
         self.save_token.setEnabled(not is_running)
         self.show_token.setEnabled(not is_running)
@@ -1079,13 +1144,18 @@ class TranscriptionWindow(QMainWindow):
         self.max_speakers.setVisible(speaker_range)
         self.max_speakers_label.setVisible(speaker_range)
         self.diarization.setEnabled(not is_running and not no_speakers_preset)
-        self.speaker_names.setEnabled(not is_running)
+        self.speaker_names.setEnabled(needs_token and not is_running)
+        self.speaker_names.setVisible(needs_token)
+        self.speaker_names_label.setVisible(needs_token)
         self.preset.setEnabled(not is_running)
         self.advanced_toggle.setEnabled(not is_running)
         self.command_toggle.setEnabled(has_audio)
 
         self.command_preview.setText(" ".join(self._build_args(mask_token=True)) if has_audio else "")
-        if needs_token and not has_token:
+        if not has_license:
+            self.settings_hint.setText("Licence manquante ou expirée: va dans l'onglet Paramètres pour activer Microwest Whisper.")
+            self.execution_hint.setText("Impossible de lancer sans licence valide. Active ta clé dans Paramètres.")
+        elif needs_token and not has_token:
             self.settings_hint.setText("Token HF manquant: va dans l'onglet Paramètres pour activer la séparation des personnes.")
             self.execution_hint.setText("Impossible de lancer avec séparation des personnes sans token HF. Configure Paramètres ou désactive la séparation.")
         else:
@@ -1098,6 +1168,8 @@ class TranscriptionWindow(QMainWindow):
             self.statusBar().showMessage("Transcription en cours...")
         elif not has_audio:
             self.statusBar().showMessage("Sélectionne un fichier audio.")
+        elif not has_license:
+            self.statusBar().showMessage("Licence requise dans Paramètres.")
         elif needs_token and not has_token:
             self.statusBar().showMessage("Token Hugging Face requis dans Paramètres pour séparer les locuteurs.")
         else:
@@ -1229,6 +1301,14 @@ class TranscriptionWindow(QMainWindow):
             )
             return
 
+        license_check = validate_license()
+        self.license_status.setText(license_status_text(license_check.state))
+        if not license_check.ok:
+            QMessageBox.critical(self, "Licence", license_check.message)
+            self.tabs.setCurrentIndex(4)
+            self._refresh_state()
+            return
+
         self._save_settings()
         self.log.clear()
         self._clear_results()
@@ -1292,10 +1372,15 @@ class TranscriptionWindow(QMainWindow):
         if running:
             self.elapsed_seconds = 0
             self.elapsed_label.setText("00:00")
+            self.ffmpeg_duration_seconds = 0.0
+            self.progress_floor = 5
+            self.progress_ceiling = 100
             self.progress.setRange(0, 100)
             self.progress.setValue(5)
             self.elapsed_timer.start(1000)
         else:
+            self.progress_floor = 0
+            self.progress_ceiling = 100
             self.progress.setRange(0, 100)
             self.progress.setValue(100 if complete else 0)
             self.elapsed_timer.stop()
@@ -1304,22 +1389,58 @@ class TranscriptionWindow(QMainWindow):
         self.elapsed_seconds += 1
         minutes, seconds = divmod(self.elapsed_seconds, 60)
         self.elapsed_label.setText(f"{minutes:02d}:{seconds:02d}")
+        if self.process is not None and self.progress.value() < self.progress_ceiling:
+            if self.stage_label.text().startswith(("Alignement", "Séparation")) and self.elapsed_seconds % 10 == 0:
+                self.progress.setValue(min(self.progress.value() + 1, self.progress_ceiling))
+
+    def _set_stage(self, label: str, value: int, ceiling: int) -> None:
+        self.stage_label.setText(label)
+        self.progress_floor = value
+        self.progress_ceiling = ceiling
+        self.progress.setValue(max(self.progress.value(), value))
 
     def _update_stage_from_log(self, text: str) -> None:
+        self._update_progress_from_tool_output(text)
         stages = (
-            ("Preparing clean", "Préparation audio...", 10),
-            ("Using existing preprocessed WAV", "Audio préparé déjà disponible.", 15),
-            ("Loading ASR model", "Chargement du modèle...", 25),
-            ("Transcribing", "Transcription...", 45),
-            ("Aligning timestamps", "Alignement temporel...", 65),
-            ("Running speaker diarization", "Séparation des locuteurs...", 82),
-            ("Diarization skipped", "Séparation ignorée.", 82),
-            ("Done. Files written", "Écriture des résultats...", 95),
+            ("Preparing clean", "Préparation audio...", 10, 20),
+            ("Using existing preprocessed WAV", "Audio préparé déjà disponible.", 15, 20),
+            ("Loading ASR model", "Chargement du modèle...", 25, 35),
+            ("Transcribing", "Transcription...", 35, 65),
+            ("Saved asr checkpoint", "Transcription terminée.", 64, 65),
+            ("Aligning timestamps", "Alignement temporel...", 65, 81),
+            ("Saved aligned checkpoint", "Alignement terminé.", 80, 81),
+            ("Running speaker diarization", "Séparation des locuteurs... calcul en cours", 82, 94),
+            ("Diarization skipped", "Séparation ignorée.", 82, 94),
+            ("Done. Files written", "Écriture des résultats...", 95, 99),
         )
-        for needle, label, value in stages:
+        for needle, label, value, ceiling in stages:
             if needle in text:
-                self.stage_label.setText(label)
-                self.progress.setValue(value)
+                self._set_stage(label, value, ceiling)
+
+    def _update_progress_from_tool_output(self, text: str) -> None:
+        duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+        if duration_match:
+            hours, minutes, seconds = duration_match.groups()
+            self.ffmpeg_duration_seconds = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+        time_matches = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+        duration = getattr(self, "ffmpeg_duration_seconds", 0)
+        if time_matches and duration:
+            hours, minutes, seconds = time_matches[-1]
+            current = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+            percent = max(0.0, min(current / duration, 1.0))
+            self.progress.setValue(max(self.progress.value(), 5 + int(percent * 15)))
+
+        if "frames/s" not in text:
+            return
+        percent_matches = re.findall(r"(\d{1,3})%\|", text)
+        if not percent_matches:
+            return
+        percent = max(0, min(int(percent_matches[-1]), 100))
+        self.stage_label.setText(f"Transcription... {percent}%")
+        self.progress_floor = 35
+        self.progress_ceiling = 65
+        self.progress.setValue(max(self.progress.value(), 35 + int(percent * 0.30)))
 
     def _expected_outputs(self) -> list[Path]:
         audio_text = self.audio_path.text().strip()

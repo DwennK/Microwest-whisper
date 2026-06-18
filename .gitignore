@@ -6,3 +6,4 @@ work/
 __pycache__/
 .env
 *.log
+.DS_Store

@@ -9,11 +9,14 @@ import shutil
 import subprocess
 import sys
 import unicodedata
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from license_client import activate_license as activate_product_license
+from license_client import license_status_text, validate_license as validate_product_license
 from transcript_paths import SUPPORTED_AUDIO_EXTENSIONS, transcript_stem, work_wav_path
 
 
@@ -41,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio", help="Path to the source audio file, for example recording.m4a.")
     parser.add_argument("--doctor", action="store_true", help="Check Python, FFmpeg, optional GPU and installed packages.")
     parser.add_argument("--check-token", action="store_true", help="Check whether the Hugging Face token can load pyannote.")
+    parser.add_argument("--activate-license", default="", help="Activate a Microwest Whisper license key on this machine.")
+    parser.add_argument("--license-status", action="store_true", help="Show the current Microwest Whisper license status.")
     parser.add_argument("--output-dir", default="output", help="Directory where transcript files are written.")
     parser.add_argument("--work-dir", default="work", help="Directory for intermediate WAV files.")
     parser.add_argument(
@@ -148,6 +153,8 @@ def recommended_profile() -> str:
 def validate_args(args: argparse.Namespace) -> None:
     if args.doctor:
         return
+    if getattr(args, "license_status", False) or getattr(args, "activate_license", ""):
+        return
     if args.check_token and not args.audio:
         return
     if not args.audio:
@@ -192,19 +199,85 @@ def checkpoint_path(paths: Paths, stage: str) -> Path:
     return paths.work_dir / f"{transcript_stem(paths.audio)}.{stage}.json"
 
 
-def load_checkpoint(paths: Paths, stage: str, force: bool = False) -> dict[str, Any] | None:
+def wav_metadata_path(paths: Paths) -> Path:
+    return paths.wav.with_suffix(paths.wav.suffix + ".meta.json")
+
+
+def audio_preprocess_signature(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "audio_filter": args.audio_filter,
+        "trim_silence": bool(args.trim_silence),
+    }
+
+
+def checkpoint_signature(args: argparse.Namespace, stage: str, resolved_backend: str) -> dict[str, Any]:
+    signature: dict[str, Any] = {
+        "version": 1,
+        "stage": stage,
+        "audio": audio_preprocess_signature(args),
+        "profile": args.profile,
+        "model": args.model,
+        "language": args.language,
+        "asr_backend": args.asr_backend,
+        "resolved_asr_backend": resolved_backend,
+        "mlx_model": resolve_mlx_model(args.model, args.mlx_model) if resolved_backend == "mlx" else None,
+        "batch_size": args.batch_size,
+        "threads": args.threads,
+        "device": args.device,
+        "compute_type": args.compute_type,
+    }
+    if stage.startswith("final."):
+        signature.update(
+            {
+                "no_diarization": bool(args.no_diarization),
+                "speakers": args.speakers,
+                "min_speakers": args.min_speakers,
+                "max_speakers": args.max_speakers,
+            }
+        )
+    return signature
+
+
+def checkpoint_matches_settings(checkpoint: dict[str, Any], signature: dict[str, Any] | None) -> bool:
+    if signature is None:
+        return True
+    metadata = checkpoint.get("_checkpoint")
+    if not isinstance(metadata, dict):
+        return False
+    return metadata.get("signature") == signature
+
+
+def load_checkpoint(
+    paths: Paths,
+    stage: str,
+    force: bool = False,
+    signature: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     path = checkpoint_path(paths, stage)
     if force or not path.exists() or path.stat().st_mtime < paths.audio.stat().st_mtime:
         return None
-    print(f"Using existing {stage} checkpoint: {path}")
     with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+        checkpoint = json.load(handle)
+    if not checkpoint_matches_settings(checkpoint, signature):
+        print(f"Ignoring existing {stage} checkpoint because settings changed: {path}")
+        return None
+    print(f"Using existing {stage} checkpoint: {path}")
+    return checkpoint
 
 
-def save_checkpoint(paths: Paths, stage: str, result: dict[str, Any]) -> None:
+def save_checkpoint(
+    paths: Paths,
+    stage: str,
+    result: dict[str, Any],
+    signature: dict[str, Any] | None = None,
+) -> None:
     path = checkpoint_path(paths, stage)
+    payload = dict(result)
+    if signature is not None:
+        payload["_checkpoint"] = {"stage": stage, "signature": signature}
     with path.open("w", encoding="utf-8") as handle:
-        json.dump(result, handle, ensure_ascii=False, indent=2)
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
     print(f"Saved {stage} checkpoint: {path}")
 
 
@@ -265,9 +338,18 @@ def build_audio_filter(args: argparse.Namespace) -> str | None:
 
 def prepare_wav(paths: Paths, args: argparse.Namespace) -> None:
     ffmpeg = ensure_ffmpeg()
-    if paths.wav.exists() and paths.wav.stat().st_mtime >= paths.audio.stat().st_mtime:
-        print(f"Using existing preprocessed WAV: {paths.wav}")
-        return
+    expected_signature = audio_preprocess_signature(args)
+    metadata_path = wav_metadata_path(paths)
+    if not args.force and paths.wav.exists() and paths.wav.stat().st_mtime >= paths.audio.stat().st_mtime:
+        try:
+            with metadata_path.open("r", encoding="utf-8") as handle:
+                metadata = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError):
+            metadata = {}
+        if metadata.get("signature") == expected_signature:
+            print(f"Using existing preprocessed WAV: {paths.wav}")
+            return
+        print(f"Rebuilding preprocessed WAV because audio settings changed: {paths.wav}")
 
     print("Preparing clean 16 kHz mono WAV for ASR...")
     command = [
@@ -286,6 +368,8 @@ def prepare_wav(paths: Paths, args: argparse.Namespace) -> None:
         command.extend(["-af", audio_filter])
     command.extend(["-c:a", "pcm_s16le", str(paths.wav)])
     run(command)
+    with metadata_path.open("w", encoding="utf-8") as handle:
+        json.dump({"signature": expected_signature}, handle, ensure_ascii=False, indent=2)
 
 
 def select_device(requested: str) -> str:
@@ -353,6 +437,65 @@ def resolve_mlx_model(model: str, requested: str) -> str:
 
 def model_language(language: str) -> str | None:
     return None if language == "auto" else language
+
+
+def is_repetitive_hallucination(text: str) -> bool:
+    normalized = strip_accents(text.lower())
+    compact = re.sub(r"\s+", "", normalized)
+    if len(compact) >= 80:
+        for size in range(2, 16):
+            repeated = 0
+            previous = ""
+            for index in range(0, len(compact) - size + 1, size):
+                chunk = compact[index : index + size]
+                if chunk == previous:
+                    repeated += 1
+                    if repeated >= 8:
+                        return True
+                else:
+                    repeated = 0
+                    previous = chunk
+
+    words = re.findall(r"[\w']+", normalized)
+    if len(words) < 8:
+        return False
+
+    counts: dict[str, int] = {}
+    for word in words:
+        counts[word] = counts.get(word, 0) + 1
+    most_common = max(counts.values(), default=0)
+    if most_common / len(words) >= 0.65:
+        return True
+
+    repeated_pairs = 0
+    for index in range(len(words) - 2):
+        if words[index] == words[index + 1] == words[index + 2]:
+            repeated_pairs += 1
+    return repeated_pairs >= 3
+
+
+def sanitize_segments_for_alignment(result: dict[str, Any], source: str) -> dict[str, Any]:
+    segments = result.get("segments")
+    if not isinstance(segments, list):
+        return result
+
+    cleaned = []
+    removed = []
+    for segment in segments:
+        text = " ".join(str(segment.get("text", "")).split()) if isinstance(segment, dict) else ""
+        if text and is_repetitive_hallucination(text):
+            removed.append(text[:80])
+            continue
+        cleaned.append(segment)
+
+    if not removed:
+        return result
+
+    updated = dict(result)
+    updated["segments"] = cleaned
+    updated["dropped_repetitive_segments"] = removed
+    print(f"Dropped {len(removed)} repetitive ASR segment(s) before {source}.")
+    return updated
 
 
 def transcribe_with_mlx(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
@@ -656,6 +799,9 @@ def apply_speaker_map(result: dict[str, Any], mapping: dict[str, str]) -> dict[s
 
 def write_outputs(paths: Paths, result: dict[str, Any]) -> list[Path]:
     stem = transcript_stem(paths.audio)
+    result = dict(result)
+    result.pop("_checkpoint", None)
+    result = sanitize_segments_for_alignment(result, "export")
     segments = normalize_segments(result)
     turns = merge_turns(segments)
 
@@ -728,6 +874,14 @@ def import_status(module: str) -> str:
         return f"missing ({exc})"
 
 
+def load_diarization_pipeline_class() -> Any:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*torchcodec is not installed correctly.*")
+        from whisperx.diarize import DiarizationPipeline
+
+    return DiarizationPipeline
+
+
 def run_doctor() -> None:
     print("Microwest Whisper doctor")
     print(f"- Python: {sys.version.split()[0]} ({sys.executable})")
@@ -753,9 +907,8 @@ def check_hf_token(token: str | None) -> None:
     if not token:
         fail("Hugging Face token missing. Set HUGGINGFACE_TOKEN or pass --hf-token.")
     try:
-        import whisperx
-
-        whisperx.diarize.DiarizationPipeline(token=token, device="cpu")
+        DiarizationPipeline = load_diarization_pipeline_class()
+        DiarizationPipeline(token=token, device="cpu")
     except Exception as exc:
         fail(
             "Hugging Face token check failed. Verify the token and accept pyannote model terms. "
@@ -791,27 +944,33 @@ def transcribe(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
     device = "cpu" if backend == "mlx" else select_device(args.device)
 
     final_checkpoint = "final.no-diarization" if args.no_diarization else "final.diarized"
-    final_result = load_checkpoint(paths, final_checkpoint, args.force)
+    final_signature = checkpoint_signature(args, final_checkpoint, backend)
+    asr_signature = checkpoint_signature(args, "asr", backend)
+    aligned_signature = checkpoint_signature(args, "aligned", backend)
+
+    final_result = load_checkpoint(paths, final_checkpoint, args.force, final_signature)
     if final_result is not None:
         return final_result
 
     audio = whisperx.load_audio(str(paths.wav))
 
-    result = load_checkpoint(paths, "asr", args.force)
+    result = load_checkpoint(paths, "asr", args.force, asr_signature)
     if result is None:
         if backend == "mlx":
             result = transcribe_with_mlx(paths, args)
             device = "cpu"
         else:
             result, device = transcribe_with_whisperx(audio, args)
+        result = sanitize_segments_for_alignment(result, "alignment")
         result["source_audio"] = str(paths.audio)
         result["preprocessed_wav"] = str(paths.wav)
-        save_checkpoint(paths, "asr", result)
+        save_checkpoint(paths, "asr", result, asr_signature)
 
+    result = sanitize_segments_for_alignment(result, "alignment")
     result["source_audio"] = str(paths.audio)
     result["preprocessed_wav"] = str(paths.wav)
 
-    aligned = load_checkpoint(paths, "aligned", args.force)
+    aligned = load_checkpoint(paths, "aligned", args.force, aligned_signature)
     if aligned is None:
         print("Aligning timestamps...")
         model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
@@ -819,17 +978,18 @@ def transcribe(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
         aligned["source_audio"] = str(paths.audio)
         aligned["preprocessed_wav"] = str(paths.wav)
         aligned["asr_backend"] = result.get("asr_backend")
-        save_checkpoint(paths, "aligned", aligned)
+        save_checkpoint(paths, "aligned", aligned, aligned_signature)
 
         del model_a
         gc.collect()
+    aligned = sanitize_segments_for_alignment(aligned, "export")
     result = aligned
 
     if args.no_diarization:
         print("Diarization skipped.")
         for segment in result.get("segments", []):
             segment["speaker"] = "SPEAKER_00"
-        save_checkpoint(paths, final_checkpoint, result)
+        save_checkpoint(paths, final_checkpoint, result, final_signature)
         return result
 
     if not args.hf_token:
@@ -837,11 +997,13 @@ def transcribe(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
 
     print("Running speaker diarization with pyannote...")
     try:
-        diarize_model = whisperx.diarize.DiarizationPipeline(token=args.hf_token, device=device)
+        DiarizationPipeline = load_diarization_pipeline_class()
+        diarize_model = DiarizationPipeline(token=args.hf_token, device=device)
     except Exception as exc:
         fail(
             "Speaker diarization could not start. Check that the Hugging Face token is valid and that "
-            "the pyannote model terms have been accepted. Details: "
+            "the pyannote model terms have been accepted, especially "
+            "https://huggingface.co/pyannote/speaker-diarization-community-1. Details: "
             f"{exc}"
         )
     diarize_kwargs: dict[str, int] = {}
@@ -859,7 +1021,7 @@ def transcribe(paths: Paths, args: argparse.Namespace) -> dict[str, Any]:
     result = whisperx.assign_word_speakers(diarize_segments, result)
     result["source_audio"] = str(paths.audio)
     result["preprocessed_wav"] = str(paths.wav)
-    save_checkpoint(paths, final_checkpoint, result)
+    save_checkpoint(paths, final_checkpoint, result, final_signature)
     return result
 
 
@@ -868,6 +1030,16 @@ def main() -> None:
     try:
         apply_profile(args)
         validate_args(args)
+        if args.license_status:
+            print(license_status_text())
+            return
+        if args.activate_license:
+            result = activate_product_license(args.activate_license)
+            if not result.ok:
+                fail(result.message)
+            print(result.message)
+            print(license_status_text(result.state))
+            return
         if args.doctor:
             run_doctor()
             return
@@ -877,6 +1049,9 @@ def main() -> None:
         paths = build_paths(args)
         if args.check_token:
             check_hf_token(args.hf_token)
+        license_check = validate_product_license()
+        if not license_check.ok:
+            fail(license_check.message)
         if args.rename_only:
             output_paths = regenerate_from_checkpoint(paths, args)
             append_history(paths, args, output_paths, status="renamed")

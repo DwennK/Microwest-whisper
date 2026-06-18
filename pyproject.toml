@@ -26,4 +26,4 @@ microwest-whisper = "transcribe:main"
 microwest-whisper-gui = "gui:main"
 
 [tool.setuptools]
-py-modules = ["transcribe", "gui", "transcript_paths"]
+py-modules = ["transcribe", "gui", "license_client", "transcript_paths"]
