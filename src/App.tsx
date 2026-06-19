@@ -10,6 +10,7 @@ import {
   Check,
   CircleAlert,
   CircleStop,
+  Clipboard,
   Clock3,
   Cpu,
   Download,
@@ -22,8 +23,11 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  Save,
+  Search,
   Settings2,
   ShieldCheck,
+  Subtitles,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -36,6 +40,7 @@ import type {
   ModelDownloadEvent,
   ModelInventory,
   OutputFile,
+  TranscriptSegment,
   TranscriptionEvent,
   TranscriptionRequest,
 } from "./types";
@@ -87,7 +92,14 @@ function App() {
   const [showLogs, setShowLogs] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
+  const [selectionOutputs, setSelectionOutputs] = useState<OutputFile[]>([]);
   const [preview, setPreview] = useState("");
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  const [selectedSegments, setSelectedSegments] = useState<number[]>([]);
+  const [segmentSearch, setSegmentSearch] = useState("");
+  const [focusedSegment, setFocusedSegment] = useState<number | null>(null);
+  const [previewMode, setPreviewMode] = useState<"text" | "srt">("text");
+  const [resultMessage, setResultMessage] = useState("");
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
@@ -161,6 +173,26 @@ function App() {
     [outputs],
   );
 
+  const filteredSegments = useMemo(() => {
+    const query = segmentSearch.trim().toLocaleLowerCase();
+    if (!query) return segments.map((segment, index) => ({ segment, index }));
+    return segments
+      .map((segment, index) => ({ segment, index }))
+      .filter(({ segment }) => segment.text.toLocaleLowerCase().includes(query));
+  }, [segments, segmentSearch]);
+
+  const selectedEditableSegments = useMemo(
+    () => selectedSegments.map((index) => segments[index]).filter(Boolean),
+    [segments, selectedSegments],
+  );
+
+  const selectedText = useMemo(
+    () => selectedEditableSegments.map((segment) => segment.text.trim()).filter(Boolean).join("\n\n"),
+    [selectedEditableSegments],
+  );
+
+  const srtPreview = useMemo(() => buildSrt(selectedEditableSegments), [selectedEditableSegments]);
+
   async function refreshHistory(dir = outputDir) {
     if (!dir) return;
     const records = await invoke<HistoryRecord[]>("read_history", { outputDir: dir });
@@ -174,7 +206,13 @@ function App() {
     const previewFile = files.find((item) => item.exists && item.path.endsWith(".transcript.md")) ?? files.find((item) => item.exists && item.path.endsWith(".clean.txt"));
     if (previewFile) {
       setPreview(await invoke<string>("read_text_preview", { path: previewFile.path }));
+    } else {
+      setPreview("");
     }
+    const loadedSegments = await invoke<TranscriptSegment[]>("read_transcript_segments", { audioPath: audio, outputDir: dir });
+    setSegments(loadedSegments);
+    setSelectedSegments(loadedSegments.map((_, index) => index));
+    setSelectionOutputs([]);
   }
 
   function applyLicenseCheck(result: LicenseCheck) {
@@ -401,6 +439,60 @@ function App() {
     } catch (cancelError) {
       setError(String(cancelError));
     }
+  }
+
+  function updateSegment(index: number, text: string) {
+    setSegments((current) => current.map((segment, itemIndex) => (itemIndex === index ? { ...segment, text } : segment)));
+  }
+
+  function toggleSegment(index: number) {
+    setSelectedSegments((current) =>
+      current.includes(index) ? current.filter((item) => item !== index) : [...current, index].sort((left, right) => left - right),
+    );
+  }
+
+  function setAllVisibleSegments(selected: boolean) {
+    const visible = filteredSegments.map(({ index }) => index);
+    setSelectedSegments((current) => {
+      if (!selected) return current.filter((index) => !visible.includes(index));
+      return Array.from(new Set([...current, ...visible])).sort((left, right) => left - right);
+    });
+  }
+
+  async function copySelectedText() {
+    const text = previewMode === "srt" ? srtPreview : selectedText || preview;
+    if (!text.trim()) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setResultMessage("Contenu copié.");
+    } catch (copyError) {
+      setError(`Copie impossible: ${String(copyError)}`);
+    }
+  }
+
+  async function exportSelectedSegments() {
+    if (!audioPath || !outputDir || selectedEditableSegments.length === 0) return;
+    setError("");
+    setResultMessage("");
+    try {
+      const files = await invoke<OutputFile[]>("export_selected_segments", {
+        request: {
+          audio_path: audioPath,
+          output_dir: outputDir,
+          segments: selectedEditableSegments,
+          formats: ["markdown", "txt", "srt", "json", "docx"],
+        },
+      });
+      setSelectionOutputs(files);
+      setResultMessage(`${files.length} export(s) de sélection généré(s).`);
+    } catch (exportError) {
+      setError(String(exportError));
+    }
+  }
+
+  function focusSegment(index: number) {
+    setFocusedSegment(index);
+    window.setTimeout(() => document.getElementById(`segment-${index}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 0);
   }
 
   const estimatedRemaining =
@@ -705,7 +797,43 @@ function App() {
         {activeStep === 4 && (
           <section className="screen results-grid">
             <div className="primary-panel">
-              <SectionTitle icon={<FileText size={20} />} title="Exports" />
+              <SectionTitle icon={<Search size={20} />} title="Segments" />
+              <div className="results-toolbar">
+                <label className="search-field">
+                  <Search size={16} />
+                  <input value={segmentSearch} placeholder="Rechercher dans la transcription" onChange={(event) => setSegmentSearch(event.target.value)} />
+                </label>
+                <button type="button" disabled={filteredSegments.length === 0} onClick={() => setAllVisibleSegments(true)}>
+                  <Check size={16} />
+                  Tout sélectionner
+                </button>
+                <button type="button" disabled={filteredSegments.length === 0} onClick={() => setAllVisibleSegments(false)}>
+                  <CircleStop size={16} />
+                  Désélectionner
+                </button>
+              </div>
+              <div className="segment-summary">
+                <strong>{selectedEditableSegments.length}</strong>
+                <span>segment(s) sélectionné(s) sur {segments.length}</span>
+              </div>
+              <div className="segment-list">
+                {filteredSegments.length === 0 && <p className="muted">Aucun segment disponible pour ce fichier.</p>}
+                {filteredSegments.map(({ segment, index }) => (
+                  <article id={`segment-${index}`} className={focusedSegment === index ? "segment-row is-focused" : "segment-row"} key={`${index}-${segment.start}`}>
+                    <label className="segment-check" aria-label={`Sélectionner le segment ${index + 1}`}>
+                      <input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => toggleSegment(index)} />
+                      <span />
+                    </label>
+                    <button className="timestamp-button" type="button" onClick={() => focusSegment(index)}>
+                      {formatSegmentTimestamp(segment.start)}
+                    </button>
+                    <textarea value={segment.text} onChange={(event) => updateSegment(index, event.target.value)} />
+                  </article>
+                ))}
+              </div>
+            </div>
+            <div className="secondary-panel">
+              <SectionTitle icon={<FileText size={20} />} title="Exports complets" />
               <div className="output-list">
                 {outputs.map((item) => (
                   <div className={item.exists ? "output-row is-ready" : "output-row"} key={item.path}>
@@ -720,9 +848,29 @@ function App() {
                   </div>
                 ))}
               </div>
-            </div>
-            <div className="secondary-panel">
-              <SectionTitle icon={<Clock3 size={20} />} title="Accès rapide" />
+              <h2>Export sélection</h2>
+              <div className="selection-actions">
+                <button className="primary" type="button" disabled={selectedEditableSegments.length === 0} onClick={exportSelectedSegments}>
+                  <Save size={16} />
+                  Exporter sélection
+                </button>
+                <button type="button" disabled={!selectedText && !preview} onClick={copySelectedText}>
+                  <Clipboard size={16} />
+                  Copier
+                </button>
+              </div>
+              {resultMessage && <p className="inline-status">{resultMessage}</p>}
+              {selectionOutputs.length > 0 && (
+                <div className="quick-list selection-output-list">
+                  {selectionOutputs.map((item) => (
+                    <button key={item.path} type="button" disabled={!item.exists} onClick={() => openPath(item.path)}>
+                      <FileText size={16} />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <h2>Accès rapide</h2>
               <div className="quick-list">
                 {quickOutputs.length === 0 && <p className="muted">Aucun export prioritaire disponible.</p>}
                 {quickOutputs.map((item) => (
@@ -751,8 +899,18 @@ function App() {
               </div>
             </div>
             <div className="preview-panel">
-              <SectionTitle icon={<FileText size={20} />} title="Aperçu" />
-              <pre>{preview || "Aucun aperçu Markdown ou texte disponible."}</pre>
+              <div className="preview-head">
+                <SectionTitle icon={previewMode === "srt" ? <Subtitles size={20} /> : <FileText size={20} />} title={previewMode === "srt" ? "Aperçu SRT" : "Aperçu texte"} />
+                <div className="segmented-control">
+                  <button className={previewMode === "text" ? "is-active" : ""} type="button" onClick={() => setPreviewMode("text")}>
+                    Texte
+                  </button>
+                  <button className={previewMode === "srt" ? "is-active" : ""} type="button" onClick={() => setPreviewMode("srt")}>
+                    SRT
+                  </button>
+                </div>
+              </div>
+              <pre>{previewMode === "srt" ? srtPreview || "Sélectionnez au moins un segment pour générer l'aperçu SRT." : selectedText || preview || "Aucun aperçu Markdown ou texte disponible."}</pre>
             </div>
           </section>
         )}
@@ -771,6 +929,14 @@ function App() {
                   <dd>{appInfo?.backend ?? engine?.backend ?? "whisper.cpp"}</dd>
                 </div>
                 <div>
+                  <dt>Modèle actif</dt>
+                  <dd>
+                    {selectedModel
+                      ? `${selectedModel.label} · ${selectedModel.installed ? selectedModel.source : "non installé"}`
+                      : engine?.default_model ?? "non détecté"}
+                  </dd>
+                </div>
+                <div>
                   <dt>Plateforme</dt>
                   <dd>{appInfo ? `${appInfo.platform} · ${appInfo.architecture}` : "détection..."}</dd>
                 </div>
@@ -781,6 +947,10 @@ function App() {
                 <div>
                   <dt>Updater</dt>
                   <dd>{appInfo?.update_endpoint ?? "GitHub Releases"}</dd>
+                </div>
+                <div>
+                  <dt>Contrôle release</dt>
+                  <dd>Signatures Tauri + SHA256SUMS.txt sur GitHub Releases</dd>
                 </div>
               </dl>
             </div>
@@ -794,6 +964,10 @@ function App() {
                 <div>
                   <dt>Modèles</dt>
                   <dd>{appInfo?.model_dir ?? modelInventory?.models_dir ?? "non détecté"}</dd>
+                </div>
+                <div>
+                  <dt>Espace modèles</dt>
+                  <dd>{formatBytes(modelInventory?.total_downloaded_bytes ?? 0)}</dd>
                 </div>
                 <div>
                   <dt>Sorties</dt>
@@ -893,6 +1067,41 @@ function formatDuration(value: number | null) {
   const minutes = Math.floor(total / 60) % 60;
   const hours = Math.floor(total / 3600);
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatSegmentTimestamp(value: number) {
+  const total = Math.max(0, Math.floor(value));
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatSrtTimestamp(value: number) {
+  const milliseconds = Math.max(0, Math.round(value * 1000));
+  const hours = Math.floor(milliseconds / 3_600_000);
+  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
+  const seconds = Math.floor((milliseconds % 60_000) / 1000);
+  const millis = milliseconds % 1000;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
+}
+
+function buildSrt(segments: TranscriptSegment[]) {
+  return segments
+    .map((segment, index) => `${index + 1}\n${formatSrtTimestamp(segment.start)} --> ${formatSrtTimestamp(segment.end)}\n${segment.text.trim()}`)
+    .join("\n\n");
+}
+
+function formatBytes(value: number) {
+  if (!value) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
 export default App;

@@ -114,14 +114,22 @@ struct TranscriptionPaths {
     wav: PathBuf,
 }
 
-#[derive(Debug, Serialize, Clone)]
-struct TranscriptSegment {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscriptSegment {
     start: f64,
     end: f64,
     text: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Deserialize)]
+pub struct SelectionExportRequest {
+    audio_path: String,
+    output_dir: String,
+    segments: Vec<TranscriptSegment>,
+    formats: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct NativeTranscript {
     backend: String,
     model: String,
@@ -274,6 +282,62 @@ pub fn read_text_preview(path: String) -> Result<String, String> {
         content.truncate(20_000);
     }
     Ok(content)
+}
+
+#[tauri::command]
+pub fn read_transcript_segments(
+    audio_path: String,
+    output_dir: String,
+) -> Result<Vec<TranscriptSegment>, String> {
+    if audio_path.trim().is_empty() || output_dir.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let audio = PathBuf::from(audio_path.trim());
+    let output_dir = PathBuf::from(output_dir.trim());
+    let stem = paths::transcript_output_stem(&audio);
+    let segments_path = output_dir.join(format!("{stem}.segments.json"));
+
+    if !segments_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&segments_path).map_err(|error| error.to_string())?;
+    let transcript =
+        serde_json::from_str::<NativeTranscript>(&content).map_err(|error| error.to_string())?;
+    Ok(transcript.segments)
+}
+
+#[tauri::command]
+pub fn export_selected_segments(
+    request: SelectionExportRequest,
+) -> Result<Vec<paths::OutputFile>, String> {
+    let audio = PathBuf::from(request.audio_path.trim());
+    if !audio.exists() {
+        return Err(format!(
+            "Fichier audio introuvable: {}",
+            audio.to_string_lossy()
+        ));
+    }
+
+    let output_dir = PathBuf::from(request.output_dir.trim());
+    fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
+
+    let segments = request
+        .segments
+        .into_iter()
+        .filter(|segment| !segment.text.trim().is_empty())
+        .map(|mut segment| {
+            segment.text = clean_text(&segment.text);
+            segment
+        })
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        return Err("Aucun segment sélectionné à exporter.".to_string());
+    }
+
+    write_selection_outputs(&audio, &output_dir, segments, &request.formats)
 }
 
 #[tauri::command]
@@ -650,6 +714,87 @@ fn write_outputs(
     let outputs = vec![txt, md, clean_txt, srt, segments_json, docx, raw_json];
     println_outputs(&outputs);
     Ok(outputs)
+}
+
+fn write_selection_outputs(
+    audio: &Path,
+    output_dir: &Path,
+    segments: Vec<TranscriptSegment>,
+    requested_formats: &[String],
+) -> Result<Vec<paths::OutputFile>, String> {
+    let stem = paths::transcript_output_stem(audio);
+    let transcript = NativeTranscript {
+        backend: BACKEND_NAME.to_string(),
+        model: "selection".to_string(),
+        model_path: String::new(),
+        language: String::new(),
+        source_audio: audio.to_string_lossy().to_string(),
+        preprocessed_wav: String::new(),
+        duration_seconds: segments.last().map(|segment| segment.end),
+        text: transcript_text(&segments),
+        segments,
+    };
+
+    let formats = if requested_formats.is_empty() {
+        vec![
+            "markdown".to_string(),
+            "txt".to_string(),
+            "srt".to_string(),
+            "json".to_string(),
+            "docx".to_string(),
+        ]
+    } else {
+        requested_formats
+            .iter()
+            .map(|format| format.trim().to_ascii_lowercase())
+            .collect()
+    };
+
+    let mut outputs = Vec::new();
+    for format in formats {
+        match format.as_str() {
+            "markdown" | "md" => {
+                let path = output_dir.join(format!("{stem}.selection.md"));
+                write_markdown(&path, &transcript, audio)?;
+                outputs.push(output_file("Sélection Markdown", &path));
+            }
+            "txt" | "text" => {
+                let path = output_dir.join(format!("{stem}.selection.txt"));
+                write_clean_txt(&path, &transcript)?;
+                outputs.push(output_file("Sélection TXT", &path));
+            }
+            "srt" => {
+                let path = output_dir.join(format!("{stem}.selection.srt"));
+                write_srt(&path, &transcript.segments)?;
+                outputs.push(output_file("Sélection SRT", &path));
+            }
+            "json" => {
+                let path = output_dir.join(format!("{stem}.selection.json"));
+                write_segments_json(&path, &transcript)?;
+                outputs.push(output_file("Sélection JSON", &path));
+            }
+            "docx" => {
+                let path = output_dir.join(format!("{stem}.selection.docx"));
+                write_docx(&path, &transcript, audio)?;
+                outputs.push(output_file("Sélection DOCX", &path));
+            }
+            _ => {}
+        }
+    }
+
+    if outputs.is_empty() {
+        return Err("Aucun format d'export sélectionné valide.".to_string());
+    }
+
+    Ok(outputs)
+}
+
+fn output_file(label: &str, path: &Path) -> paths::OutputFile {
+    paths::OutputFile {
+        label: label.to_string(),
+        path: path.to_string_lossy().to_string(),
+        exists: path.exists(),
+    }
 }
 
 fn append_history(
@@ -1745,5 +1890,48 @@ mod tests {
         assert!(message.contains("FFmpeg"));
         assert!(message.contains("présent dans le bundle"));
         assert!(message.contains("not found"));
+    }
+
+    #[test]
+    fn writes_selection_exports_without_touching_full_exports() {
+        let root =
+            env::temp_dir().join(format!("microwest-selection-test-{}", uuid::Uuid::new_v4()));
+        let output_dir = root.join("out");
+        fs::create_dir_all(&output_dir).unwrap();
+        let audio = root.join("meeting.wav");
+        fs::write(&audio, b"audio").unwrap();
+
+        let outputs = write_selection_outputs(
+            &audio,
+            &output_dir,
+            vec![TranscriptSegment {
+                start: 4.0,
+                end: 6.5,
+                text: " Segment choisi ".to_string(),
+            }],
+            &[
+                "markdown".to_string(),
+                "txt".to_string(),
+                "srt".to_string(),
+                "json".to_string(),
+                "docx".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(outputs.len(), 5);
+        assert!(outputs.iter().all(|output| output.exists));
+        assert!(outputs
+            .iter()
+            .all(|output| output.path.contains(".selection.")));
+        let srt = outputs
+            .iter()
+            .find(|output| output.path.ends_with(".selection.srt"))
+            .unwrap();
+        let srt_content = fs::read_to_string(&srt.path).unwrap();
+        assert!(srt_content.contains("00:00:04,000 --> 00:00:06,500"));
+        assert!(srt_content.contains("Segment choisi"));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

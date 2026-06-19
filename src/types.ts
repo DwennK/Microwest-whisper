@@ -46,6 +46,12 @@ export interface OutputFile {
   exists: boolean;
 }
 
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;

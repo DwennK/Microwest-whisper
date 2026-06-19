@@ -22,6 +22,8 @@ fn main() {
             transcription::expected_outputs,
             transcription::read_history,
             transcription::read_text_preview,
+            transcription::read_transcript_segments,
+            transcription::export_selected_segments,
             transcription::start_transcription,
             transcription::cancel_transcription,
         ])
