@@ -12,9 +12,14 @@ export interface LicenseCheck {
 }
 
 export interface EngineStatus {
+  backend: string;
   engine_root: string;
   python: string;
   transcribe_path: string;
+  whisper_cli: string;
+  ffmpeg: string;
+  model_path: string;
+  default_model: string;
   default_output_dir: string;
   default_work_dir: string;
   can_run: boolean;

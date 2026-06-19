@@ -1,33 +1,44 @@
-use crate::paths;
+use crate::{license, paths};
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     env,
-    fs,
-    io::{BufRead, BufReader, Read},
+    fs::{self, File},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+const BACKEND_NAME: &str = "whisper.cpp";
+const DEFAULT_MODEL: &str = "large-v3-turbo-q8_0";
 
 #[derive(Clone, Default)]
 pub struct TranscriptionState {
     running: Arc<Mutex<bool>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct EngineStatus {
+    backend: String,
     engine_root: String,
     python: String,
     transcribe_path: String,
+    whisper_cli: String,
+    ffmpeg: String,
+    model_path: String,
+    default_model: String,
     default_output_dir: String,
     default_work_dir: String,
     can_run: bool,
     message: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TranscriptionRequest {
     audio_path: String,
@@ -79,13 +90,44 @@ pub struct HistoryRecord {
     outputs: Vec<String>,
 }
 
-#[tauri::command]
-pub fn engine_status() -> EngineStatus {
-    build_engine_status()
+#[derive(Debug)]
+struct TranscriptionPaths {
+    audio: PathBuf,
+    output_dir: PathBuf,
+    work_dir: PathBuf,
+    wav: PathBuf,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct TranscriptSegment {
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct NativeTranscript {
+    backend: String,
+    model: String,
+    model_path: String,
+    language: String,
+    source_audio: String,
+    preprocessed_wav: String,
+    duration_seconds: Option<f64>,
+    text: String,
+    segments: Vec<TranscriptSegment>,
 }
 
 #[tauri::command]
-pub fn expected_outputs(audio_path: String, output_dir: String) -> Result<Vec<paths::OutputFile>, String> {
+pub fn engine_status(app: AppHandle) -> EngineStatus {
+    build_engine_status(Some(&app))
+}
+
+#[tauri::command]
+pub fn expected_outputs(
+    audio_path: String,
+    output_dir: String,
+) -> Result<Vec<paths::OutputFile>, String> {
     if audio_path.trim().is_empty() || output_dir.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -114,17 +156,36 @@ pub fn read_history(output_dir: String) -> Result<Vec<HistoryRecord>, String> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            status: value.get("status").and_then(Value::as_str).unwrap_or_default().to_string(),
+            status: value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             source_audio: value
                 .get("source_audio")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            stem: value.get("stem").and_then(Value::as_str).unwrap_or_default().to_string(),
+            stem: value
+                .get("stem")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             duration_seconds: value.get("duration_seconds").and_then(Value::as_f64),
-            language: value.get("language").and_then(Value::as_str).unwrap_or_default().to_string(),
-            model: value.get("model").and_then(Value::as_str).unwrap_or_default().to_string(),
-            diarization: value.get("diarization").and_then(Value::as_bool).unwrap_or(false),
+            language: value
+                .get("language")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            model: value
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            diarization: value
+                .get("diarization")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             outputs: value
                 .get("outputs")
                 .and_then(Value::as_array)
@@ -163,30 +224,31 @@ pub fn start_transcription(
     request: TranscriptionRequest,
 ) -> Result<StartResponse, String> {
     {
-        let mut running = state.running.lock().map_err(|_| "Etat process indisponible.".to_string())?;
+        let mut running = state
+            .running
+            .lock()
+            .map_err(|_| "Etat process indisponible.".to_string())?;
         if *running {
             return Err("Une transcription est déjà en cours.".to_string());
         }
         *running = true;
     }
 
-    let status = build_engine_status();
+    let status = build_engine_status(Some(&app));
     if !status.can_run {
         set_running(&state, false)?;
         return Err(status.message);
     }
 
+    if let Err(error) = license::local_license_allows_run() {
+        set_running(&state, false)?;
+        return Err(error);
+    }
+
     let state_for_thread = state.inner().clone();
     thread::spawn(move || {
         if let Err(error) = run_transcription(app.clone(), request, status) {
-            let _ = emit_event(
-                &app,
-                "failed",
-                "system",
-                &error,
-                "Echec",
-                0,
-            );
+            let _ = emit_event(&app, "failed", "system", &error, "Echec", 0);
         }
         let _ = set_running_direct(&state_for_thread, false);
     });
@@ -194,10 +256,17 @@ pub fn start_transcription(
     Ok(StartResponse { started: true })
 }
 
-fn run_transcription(app: AppHandle, request: TranscriptionRequest, status: EngineStatus) -> Result<(), String> {
+fn run_transcription(
+    app: AppHandle,
+    request: TranscriptionRequest,
+    status: EngineStatus,
+) -> Result<(), String> {
     let audio = PathBuf::from(request.audio_path.trim());
     if !audio.exists() {
-        return Err(format!("Fichier audio introuvable: {}", audio.to_string_lossy()));
+        return Err(format!(
+            "Fichier audio introuvable: {}",
+            audio.to_string_lossy()
+        ));
     }
 
     let output_dir = PathBuf::from(request.output_dir.trim());
@@ -210,79 +279,300 @@ fn run_transcription(app: AppHandle, request: TranscriptionRequest, status: Engi
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&work_dir).map_err(|error| error.to_string())?;
 
+    let paths = TranscriptionPaths {
+        wav: paths::work_wav_path(&audio, &work_dir),
+        audio,
+        output_dir,
+        work_dir,
+    };
+
+    emit_event(
+        &app,
+        "started",
+        "system",
+        "Backend natif whisper.cpp initialisé.",
+        "Préparation",
+        5,
+    )?;
+
+    let model_path = resolve_model_path(Path::new(&status.engine_root), &request.model);
+    if !model_path.exists {
+        return Err(format!(
+            "Modèle whisper.cpp introuvable: {}. Configure MICROWEST_WHISPER_MODEL ou place le modèle dans engine/whispercpp/models.",
+            model_path.path.to_string_lossy()
+        ));
+    }
+
+    prepare_wav(&app, &paths, &request, Path::new(&status.ffmpeg))?;
+    let transcript = run_whisper_cpp(
+        &app,
+        &paths,
+        &request,
+        Path::new(&status.whisper_cli),
+        &model_path.path,
+    )?;
+    let outputs = write_outputs(&paths, &transcript)?;
+    append_history(
+        &paths,
+        &request,
+        &outputs,
+        transcript.duration_seconds,
+        "success",
+    )?;
+
+    emit_event(
+        &app,
+        "completed",
+        "system",
+        "Process terminé.",
+        "Terminé",
+        100,
+    )?;
+    Ok(())
+}
+
+fn prepare_wav(
+    app: &AppHandle,
+    paths: &TranscriptionPaths,
+    request: &TranscriptionRequest,
+    ffmpeg: &Path,
+) -> Result<(), String> {
+    let metadata_path = paths.wav.with_extension("wav.meta.json");
+    let signature = audio_preprocess_signature(request);
+    if !request.force
+        && paths.wav.exists()
+        && paths
+            .wav
+            .wav_metadata_is_fresh(&paths.audio, &metadata_path, &signature)
+    {
+        emit_event(
+            app,
+            "log",
+            "system",
+            &format!(
+                "Using existing preprocessed WAV: {}",
+                paths.wav.to_string_lossy()
+            ),
+            "Audio préparé",
+            15,
+        )?;
+        return Ok(());
+    }
+
+    emit_event(
+        app,
+        "log",
+        "system",
+        "Preparing clean 16 kHz mono WAV for ASR...",
+        "Préparation audio",
+        10,
+    )?;
+    if let Some(parent) = paths.wav.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
     let mut args = vec![
-        "-u".to_string(),
-        status.transcribe_path.clone(),
-        "--audio".to_string(),
-        audio.to_string_lossy().to_string(),
-        "--output-dir".to_string(),
-        output_dir.to_string_lossy().to_string(),
-        "--work-dir".to_string(),
-        work_dir.to_string_lossy().to_string(),
-        "--model".to_string(),
-        request.model,
-        "--asr-backend".to_string(),
-        request.asr_backend,
-        "--language".to_string(),
-        request.language,
-        "--audio-filter".to_string(),
-        request.audio_filter,
-        "--batch-size".to_string(),
-        request.batch_size.to_string(),
-        "--threads".to_string(),
-        request.threads.to_string(),
-        "--device".to_string(),
-        request.device,
-        "--compute-type".to_string(),
-        request.compute_type,
+        "-y".to_string(),
+        "-i".to_string(),
+        paths.audio.to_string_lossy().to_string(),
+        "-vn".to_string(),
+        "-ac".to_string(),
+        "1".to_string(),
+        "-ar".to_string(),
+        "16000".to_string(),
     ];
-
-    if request.trim_silence {
-        args.push("--trim-silence".to_string());
+    if let Some(filter) = build_audio_filter(request) {
+        args.extend(["-af".to_string(), filter]);
     }
+    args.extend([
+        "-c:a".to_string(),
+        "pcm_s16le".to_string(),
+        paths.wav.to_string_lossy().to_string(),
+    ]);
+
+    emit_event(
+        app,
+        "log",
+        "system",
+        &command_preview(ffmpeg, &args),
+        "Préparation audio",
+        10,
+    )?;
+    let mut command = Command::new(ffmpeg);
+    command.args(&args);
+    run_logged_command(
+        app.clone(),
+        command,
+        "Impossible de convertir l'audio avec FFmpeg",
+    )?;
+
+    let metadata = json!({ "signature": signature });
+    fs::write(
+        metadata_path,
+        serde_json::to_string_pretty(&metadata).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn run_whisper_cpp(
+    app: &AppHandle,
+    paths: &TranscriptionPaths,
+    request: &TranscriptionRequest,
+    whisper_cli: &Path,
+    model_path: &Path,
+) -> Result<NativeTranscript, String> {
+    let output_base = paths.work_dir.join(format!(
+        "{}.whispercpp",
+        paths::transcript_output_stem(&paths.audio)
+    ));
+    let raw_json_path = output_base.with_extension("json");
+    let raw_srt_path = output_base.with_extension("srt");
+
     if request.force {
-        args.push("--force".to_string());
+        let _ = fs::remove_file(&raw_json_path);
+        let _ = fs::remove_file(&raw_srt_path);
     }
-    if let Some(speaker_map) = request.speaker_map.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        args.extend(["--speaker-map".to_string(), speaker_map.to_string()]);
+
+    let language = normalize_language(&request.language);
+    let mut args = vec![
+        "-m".to_string(),
+        model_path.to_string_lossy().to_string(),
+        "-f".to_string(),
+        paths.wav.to_string_lossy().to_string(),
+        "-l".to_string(),
+        language.clone(),
+        "-oj".to_string(),
+        "-osrt".to_string(),
+        "-of".to_string(),
+        output_base.to_string_lossy().to_string(),
+        "-pp".to_string(),
+    ];
+    if request.threads > 0 {
+        args.extend(["-t".to_string(), request.threads.to_string()]);
     }
-    if request.diarization {
-        match request.speaker_mode.as_str() {
-            "exact" => {
-                if let Some(speakers) = request.speakers {
-                    args.extend(["--speakers".to_string(), speakers.to_string()]);
-                }
-            }
-            "range" => {
-                if let Some(min_speakers) = request.min_speakers {
-                    args.extend(["--min-speakers".to_string(), min_speakers.to_string()]);
-                }
-                if let Some(max_speakers) = request.max_speakers {
-                    args.extend(["--max-speakers".to_string(), max_speakers.to_string()]);
-                }
-            }
-            _ => {}
-        }
+    if request.device == "cpu" {
+        args.push("-ng".to_string());
+    }
+
+    emit_event(
+        app,
+        "log",
+        "system",
+        "Loading whisper.cpp model...",
+        "Chargement modèle",
+        25,
+    )?;
+    emit_event(
+        app,
+        "log",
+        "system",
+        &command_preview(whisper_cli, &args),
+        "Transcription",
+        35,
+    )?;
+    let mut command = Command::new(whisper_cli);
+    command.args(&args).current_dir(&paths.work_dir);
+    run_logged_command(app.clone(), command, "whisper-cli a échoué")?;
+
+    let mut transcript = if raw_json_path.exists() {
+        parse_whisper_json(&raw_json_path)?
+    } else if raw_srt_path.exists() {
+        parse_srt_transcript(&raw_srt_path, &language)?
     } else {
-        args.push("--no-diarization".to_string());
+        return Err(format!(
+            "whisper-cli n'a pas produit de JSON/SRT attendu sous {}",
+            output_base.to_string_lossy()
+        ));
+    };
+
+    transcript.backend = BACKEND_NAME.to_string();
+    transcript.model = request.model.clone();
+    transcript.model_path = model_path.to_string_lossy().to_string();
+    transcript.source_audio = paths.audio.to_string_lossy().to_string();
+    transcript.preprocessed_wav = paths.wav.to_string_lossy().to_string();
+    if transcript.language.is_empty() {
+        transcript.language = language;
     }
+    transcript.text = transcript_text(&transcript.segments);
+    transcript.duration_seconds = transcript.segments.last().map(|segment| segment.end);
+    Ok(transcript)
+}
 
-    let command_preview = format!("{} {}", status.python, args.join(" "));
-    emit_event(&app, "started", "system", &command_preview, "Préparation", 5)?;
+fn write_outputs(
+    paths: &TranscriptionPaths,
+    transcript: &NativeTranscript,
+) -> Result<Vec<PathBuf>, String> {
+    let stem = paths::transcript_output_stem(&paths.audio);
+    let txt = paths.output_dir.join(format!("{stem}.transcript.txt"));
+    let md = paths.output_dir.join(format!("{stem}.transcript.md"));
+    let clean_txt = paths.output_dir.join(format!("{stem}.clean.txt"));
+    let srt = paths.output_dir.join(format!("{stem}.segments.srt"));
+    let segments_json = paths.output_dir.join(format!("{stem}.segments.json"));
+    let docx = paths.output_dir.join(format!("{stem}.transcript.docx"));
+    let raw_json = paths.output_dir.join(format!("{stem}.whispercpp.json"));
 
-    let mut command = Command::new(&status.python);
-    command
-        .args(&args)
-        .current_dir(&status.engine_root)
-        .env("PYTHONUNBUFFERED", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    write_timestamped_txt(&txt, &transcript.segments)?;
+    write_markdown(&md, transcript, &paths.audio)?;
+    write_clean_txt(&clean_txt, transcript)?;
+    write_srt(&srt, &transcript.segments)?;
+    write_segments_json(&segments_json, transcript)?;
+    write_docx(&docx, transcript, &paths.audio)?;
+    fs::write(
+        &raw_json,
+        serde_json::to_string_pretty(transcript).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
 
-    if let Some(token) = request.hf_token.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        command.env("HUGGINGFACE_TOKEN", token);
-    }
+    let outputs = vec![txt, md, clean_txt, srt, segments_json, docx, raw_json];
+    println_outputs(&outputs);
+    Ok(outputs)
+}
 
-    let mut child = command.spawn().map_err(|error| format!("Impossible de lancer le moteur Python: {error}"))?;
+fn append_history(
+    paths: &TranscriptionPaths,
+    request: &TranscriptionRequest,
+    output_paths: &[PathBuf],
+    duration_seconds: Option<f64>,
+    status: &str,
+) -> Result<(), String> {
+    let history = paths.output_dir.join("transcription-history.jsonl");
+    let record = json!({
+        "created_at": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        "status": status,
+        "source_audio": paths.audio.to_string_lossy(),
+        "stem": paths::transcript_output_stem(&paths.audio),
+        "duration_seconds": duration_seconds,
+        "language": request.language,
+        "model": request.model,
+        "asr_backend": BACKEND_NAME,
+        "diarization": false,
+        "outputs": output_paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+    });
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&history)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::to_string(&record).map_err(|error| error.to_string())?
+    )
+    .map_err(|error| error.to_string())?;
+    println!("History updated: {}", history.to_string_lossy());
+    Ok(())
+}
+
+fn run_logged_command(
+    app: AppHandle,
+    mut command: Command,
+    failure_context: &str,
+) -> Result<(), String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("{failure_context}: {error}"))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -298,12 +588,13 @@ fn run_transcription(app: AppHandle, request: TranscriptionRequest, status: Engi
     }
 
     if status.success() {
-        emit_event(&app, "completed", "system", "Process terminé.", "Terminé", 100)?;
         Ok(())
     } else {
         Err(format!(
-            "Process terminé avec code {}.",
-            status.code().map_or_else(|| "inconnu".to_string(), |code| code.to_string())
+            "{failure_context}. Code {}.",
+            status
+                .code()
+                .map_or_else(|| "inconnu".to_string(), |code| code.to_string())
         ))
     }
 }
@@ -325,14 +616,13 @@ fn stage_from_line(line: &str) -> (String, u8) {
     let mappings = [
         ("Preparing clean", "Préparation audio", 10),
         ("Using existing preprocessed WAV", "Audio préparé", 15),
-        ("Loading ASR model", "Chargement modèle", 25),
-        ("Transcribing", "Transcription", 35),
-        ("Saved asr checkpoint", "Transcription terminée", 64),
-        ("Aligning timestamps", "Alignement temporel", 65),
-        ("Saved aligned checkpoint", "Alignement terminé", 80),
-        ("Running speaker diarization", "Séparation des locuteurs", 82),
-        ("Diarization skipped", "Séparation ignorée", 82),
-        ("Done. Files written", "Ecriture des résultats", 95),
+        ("Loading whisper.cpp model", "Chargement modèle", 25),
+        ("whisper_init", "Chargement modèle", 30),
+        ("system_info", "Chargement modèle", 30),
+        ("main: processing", "Transcription", 35),
+        ("progress", "Transcription", 55),
+        ("output_json", "Ecriture des résultats", 90),
+        ("output_srt", "Ecriture des résultats", 90),
         ("History updated", "Historique mis à jour", 98),
     ];
 
@@ -365,27 +655,44 @@ fn emit_event(
     .map_err(|error| error.to_string())
 }
 
-fn build_engine_status() -> EngineStatus {
-    let engine_root = find_engine_root().unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let transcribe_path = engine_root.join("transcribe.py");
-    let python = find_python(&engine_root);
+fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
+    let engine_root = find_engine_root(app);
     let data_root = default_data_root(&engine_root);
     let default_output_dir = paths::default_output_dir(&data_root);
     let default_work_dir = paths::default_work_dir(&data_root);
-    let python_exists = Path::new(&python).exists() || python == "python3" || python == "python";
-    let can_run = transcribe_path.exists() && python_exists;
+    let whisper_cli = find_whisper_cli(&engine_root);
+    let ffmpeg = find_ffmpeg(&engine_root);
+    let model_path = resolve_status_model_path(&engine_root);
+
+    let mut missing = Vec::new();
+    if !whisper_cli.exists {
+        missing.push("whisper-cli");
+    }
+    if !ffmpeg.exists {
+        missing.push("FFmpeg");
+    }
+    if !model_path.exists {
+        missing.push("modèle GGML/GGUF");
+    }
+    let can_run = missing.is_empty();
     let message = if can_run {
-        "Moteur Python détecté.".to_string()
-    } else if !transcribe_path.exists() {
-        format!("transcribe.py introuvable depuis {}", engine_root.to_string_lossy())
+        "Backend natif whisper.cpp prêt.".to_string()
     } else {
-        "Python introuvable. Configure MICROWEST_PYTHON ou crée .venv.".to_string()
+        format!(
+            "Backend whisper.cpp incomplet: {} manquant(s). Configure MICROWEST_WHISPER_CLI, MICROWEST_FFMPEG ou MICROWEST_WHISPER_MODEL.",
+            missing.join(", ")
+        )
     };
 
     EngineStatus {
+        backend: BACKEND_NAME.to_string(),
         engine_root: engine_root.to_string_lossy().to_string(),
-        python,
-        transcribe_path: transcribe_path.to_string_lossy().to_string(),
+        python: String::new(),
+        transcribe_path: String::new(),
+        whisper_cli: whisper_cli.path.to_string_lossy().to_string(),
+        ffmpeg: ffmpeg.path.to_string_lossy().to_string(),
+        model_path: model_path.path.to_string_lossy().to_string(),
+        default_model: DEFAULT_MODEL.to_string(),
         default_output_dir: default_output_dir.to_string_lossy().to_string(),
         default_work_dir: default_work_dir.to_string_lossy().to_string(),
         can_run,
@@ -393,15 +700,43 @@ fn build_engine_status() -> EngineStatus {
     }
 }
 
-fn find_engine_root() -> Option<PathBuf> {
-    if let Ok(path) = env::var("MICROWEST_ENGINE_ROOT") {
-        let path = PathBuf::from(path);
-        if let Some(engine_root) = resolve_engine_root(&path) {
-            return Some(engine_root);
-        }
+#[derive(Debug)]
+struct ResolvedPath {
+    path: PathBuf,
+    exists: bool,
+}
+
+fn find_engine_root(app: Option<&AppHandle>) -> PathBuf {
+    if let Ok(path) = env::var("MICROWEST_WHISPER_CPP_ROOT") {
+        return PathBuf::from(path);
     }
 
     let mut candidates = Vec::new();
+    if let Some(app) = app {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            candidates.push(resource_dir.join("engine").join("whispercpp"));
+        }
+    }
+    for root in repo_candidates() {
+        candidates.push(root.join("engine").join("whispercpp"));
+    }
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.exists())
+        .cloned()
+        .unwrap_or_else(|| repo_root().join("engine").join("whispercpp"))
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn repo_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![repo_root()];
     if let Ok(current) = env::current_dir() {
         candidates.push(current.clone());
         if let Some(parent) = current.parent() {
@@ -411,57 +746,11 @@ fn find_engine_root() -> Option<PathBuf> {
             }
         }
     }
-
-    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    candidates.push(manifest_root.clone());
-    if let Some(parent) = manifest_root.parent() {
-        candidates.push(parent.to_path_buf());
-        if let Some(grand_parent) = parent.parent() {
-            candidates.push(grand_parent.to_path_buf());
-        }
-    }
-
-    candidates.into_iter().find_map(|candidate| resolve_engine_root(&candidate))
-}
-
-fn find_python(engine_root: &Path) -> String {
-    if let Ok(path) = env::var("MICROWEST_PYTHON") {
-        return path;
-    }
-
-    for root in [default_data_root(engine_root), engine_root.to_path_buf()] {
-        let venv_python = if cfg!(target_os = "windows") {
-            root.join(".venv").join("Scripts").join("python.exe")
-        } else {
-            root.join(".venv").join("bin").join("python")
-        };
-        if venv_python.exists() {
-            return venv_python.to_string_lossy().to_string();
-        }
-    }
-
-    if cfg!(target_os = "windows") {
-        "python".to_string()
-    } else {
-        "python3".to_string()
-    }
-}
-
-fn resolve_engine_root(candidate: &Path) -> Option<PathBuf> {
-    if candidate.join("transcribe.py").exists() {
-        return Some(candidate.to_path_buf());
-    }
-
-    let nested = candidate.join("engine").join("python");
-    if nested.join("transcribe.py").exists() {
-        return Some(nested);
-    }
-
-    None
+    candidates
 }
 
 fn default_data_root(engine_root: &Path) -> PathBuf {
-    if engine_root.file_name().and_then(|value| value.to_str()) == Some("python") {
+    if engine_root.file_name().and_then(|value| value.to_str()) == Some("whispercpp") {
         if let Some(engine_dir) = engine_root.parent() {
             if engine_dir.file_name().and_then(|value| value.to_str()) == Some("engine") {
                 if let Some(repo_root) = engine_dir.parent() {
@@ -470,7 +759,645 @@ fn default_data_root(engine_root: &Path) -> PathBuf {
             }
         }
     }
-    engine_root.to_path_buf()
+    repo_root()
+}
+
+fn find_whisper_cli(engine_root: &Path) -> ResolvedPath {
+    find_executable(
+        "MICROWEST_WHISPER_CLI",
+        engine_root,
+        &["whisper-cli", "main"],
+        "whisper-cli",
+    )
+}
+
+fn find_ffmpeg(engine_root: &Path) -> ResolvedPath {
+    find_executable("MICROWEST_FFMPEG", engine_root, &["ffmpeg"], "ffmpeg")
+}
+
+fn find_executable(
+    env_name: &str,
+    engine_root: &Path,
+    base_names: &[&str],
+    path_name: &str,
+) -> ResolvedPath {
+    if let Ok(path) = env::var(env_name) {
+        let path = PathBuf::from(path);
+        return ResolvedPath {
+            exists: path.exists(),
+            path,
+        };
+    }
+
+    for dir in bundled_binary_dirs(engine_root) {
+        for base_name in base_names {
+            let path = dir.join(executable_name(base_name));
+            if path.exists() {
+                return ResolvedPath { path, exists: true };
+            }
+        }
+    }
+
+    if let Some(path) = find_on_path(path_name) {
+        return ResolvedPath { path, exists: true };
+    }
+
+    let fallback = bundled_binary_dirs(engine_root)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| engine_root.join("bin"))
+        .join(executable_name(path_name));
+    ResolvedPath {
+        path: fallback,
+        exists: false,
+    }
+}
+
+fn bundled_binary_dirs(engine_root: &Path) -> Vec<PathBuf> {
+    let platform = platform_tag();
+    vec![
+        engine_root.join("bin").join(&platform),
+        engine_root.join("bin").join(env::consts::OS),
+        engine_root.join("bin"),
+    ]
+}
+
+fn platform_tag() -> String {
+    let os = match env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        "linux" => "linux",
+        other => other,
+    };
+    format!("{os}-{}", env::consts::ARCH)
+}
+
+fn executable_name(base: &str) -> String {
+    if cfg!(target_os = "windows") && !base.ends_with(".exe") {
+        format!("{base}.exe")
+    } else {
+        base.to_string()
+    }
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path_env = env::var_os("PATH")?;
+    let executable = executable_name(name);
+    env::split_paths(&path_env)
+        .map(|path| path.join(&executable))
+        .find(|path| path.exists())
+}
+
+fn resolve_model_path(engine_root: &Path, requested: &str) -> ResolvedPath {
+    if let Ok(path) = env::var("MICROWEST_WHISPER_MODEL") {
+        let path = PathBuf::from(path);
+        return ResolvedPath {
+            exists: path.exists(),
+            path,
+        };
+    }
+
+    let requested = requested.trim();
+    let model_name = if requested.is_empty() || requested == "auto" {
+        DEFAULT_MODEL
+    } else {
+        requested
+    };
+    let direct = PathBuf::from(model_name);
+    if direct.is_absolute() || direct.components().count() > 1 {
+        return ResolvedPath {
+            exists: direct.exists(),
+            path: direct,
+        };
+    }
+
+    let models_dir = engine_root.join("models");
+    let candidates = [
+        models_dir.join(model_name),
+        models_dir.join(format!("{model_name}.bin")),
+        models_dir.join(format!("{model_name}.gguf")),
+        models_dir.join(format!("ggml-{model_name}.bin")),
+        models_dir.join(format!("ggml-{model_name}.gguf")),
+    ];
+    candidates
+        .iter()
+        .find(|candidate| candidate.exists())
+        .map(|path| ResolvedPath {
+            path: path.to_path_buf(),
+            exists: true,
+        })
+        .unwrap_or_else(|| ResolvedPath {
+            path: models_dir.join(format!("ggml-{model_name}.bin")),
+            exists: false,
+        })
+}
+
+fn resolve_status_model_path(engine_root: &Path) -> ResolvedPath {
+    let default = resolve_model_path(engine_root, DEFAULT_MODEL);
+    if default.exists {
+        return default;
+    }
+
+    let lighter = resolve_model_path(engine_root, "large-v3-turbo-q5_0");
+    if lighter.exists {
+        return lighter;
+    }
+
+    default
+}
+
+fn audio_preprocess_signature(request: &TranscriptionRequest) -> Value {
+    json!({
+        "version": 1,
+        "audio_filter": request.audio_filter,
+        "trim_silence": request.trim_silence,
+    })
+}
+
+trait WavFreshness {
+    fn wav_metadata_is_fresh(
+        &self,
+        source_audio: &Path,
+        metadata_path: &Path,
+        signature: &Value,
+    ) -> bool;
+}
+
+impl WavFreshness for PathBuf {
+    fn wav_metadata_is_fresh(
+        &self,
+        source_audio: &Path,
+        metadata_path: &Path,
+        signature: &Value,
+    ) -> bool {
+        if !self.exists() {
+            return false;
+        }
+        let Ok(wav_meta) = self.metadata() else {
+            return false;
+        };
+        let Ok(audio_meta) = source_audio.metadata() else {
+            return false;
+        };
+        let Ok(wav_modified) = wav_meta.modified() else {
+            return false;
+        };
+        let Ok(audio_modified) = audio_meta.modified() else {
+            return false;
+        };
+        if wav_modified < audio_modified {
+            return false;
+        }
+        let Ok(content) = fs::read_to_string(metadata_path) else {
+            return false;
+        };
+        let Ok(metadata) = serde_json::from_str::<Value>(&content) else {
+            return false;
+        };
+        metadata.get("signature") == Some(signature)
+    }
+}
+
+fn build_audio_filter(request: &TranscriptionRequest) -> Option<String> {
+    let mut filters = Vec::new();
+    if request.trim_silence {
+        filters.push("silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB");
+    }
+    match request.audio_filter.as_str() {
+        "loudnorm" => filters.push("loudnorm=I=-16:TP=-1.5:LRA=11"),
+        "voice-clean" => filters.extend([
+            "highpass=f=80",
+            "lowpass=f=7800",
+            "afftdn=nf=-25",
+            "loudnorm=I=-16:TP=-1.5:LRA=11",
+        ]),
+        _ => {}
+    }
+    (!filters.is_empty()).then(|| filters.join(","))
+}
+
+fn normalize_language(language: &str) -> String {
+    let language = language.trim();
+    if language.is_empty() {
+        "auto".to_string()
+    } else {
+        language.to_string()
+    }
+}
+
+fn command_preview(program: &Path, args: &[String]) -> String {
+    let mut parts = vec![quote_arg(&program.to_string_lossy())];
+    parts.extend(args.iter().map(|arg| quote_arg(arg)));
+    format!("+ {}", parts.join(" "))
+}
+
+fn quote_arg(value: &str) -> String {
+    if value.contains(' ') {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn parse_whisper_json(path: &Path) -> Result<NativeTranscript, String> {
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value = serde_json::from_str::<Value>(&content).map_err(|error| error.to_string())?;
+    let language = value
+        .pointer("/result/language")
+        .or_else(|| value.get("language"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let segments: Vec<TranscriptSegment> = value
+        .get("segments")
+        .and_then(Value::as_array)
+        .map(|segments| parse_generic_segments(segments))
+        .or_else(|| {
+            value
+                .get("transcription")
+                .and_then(Value::as_array)
+                .map(|segments| parse_whisper_cpp_segments(segments))
+        })
+        .unwrap_or_default();
+
+    if segments.is_empty() {
+        return Err(format!(
+            "Aucun segment exploitable dans {}",
+            path.to_string_lossy()
+        ));
+    }
+
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(clean_text)
+        .unwrap_or_else(|| transcript_text(&segments));
+
+    Ok(NativeTranscript {
+        backend: BACKEND_NAME.to_string(),
+        model: String::new(),
+        model_path: String::new(),
+        language,
+        source_audio: String::new(),
+        preprocessed_wav: String::new(),
+        duration_seconds: segments.last().map(|segment| segment.end),
+        text,
+        segments,
+    })
+}
+
+fn parse_generic_segments(segments: &[Value]) -> Vec<TranscriptSegment> {
+    segments
+        .iter()
+        .filter_map(|segment| {
+            let text = clean_text(segment.get("text")?.as_str()?);
+            if text.is_empty() {
+                return None;
+            }
+            Some(TranscriptSegment {
+                start: number_field(segment, "start").unwrap_or(0.0),
+                end: number_field(segment, "end").unwrap_or(0.0),
+                text,
+            })
+        })
+        .collect()
+}
+
+fn parse_whisper_cpp_segments(segments: &[Value]) -> Vec<TranscriptSegment> {
+    segments
+        .iter()
+        .filter_map(|segment| {
+            let text = clean_text(segment.get("text")?.as_str()?);
+            if text.is_empty() {
+                return None;
+            }
+            let start = segment
+                .pointer("/offsets/from")
+                .and_then(number_value)
+                .map(|value| value / 1000.0)
+                .or_else(|| {
+                    segment
+                        .pointer("/timestamps/from")
+                        .and_then(timestamp_value)
+                })
+                .or_else(|| number_field(segment, "start"))
+                .unwrap_or(0.0);
+            let end = segment
+                .pointer("/offsets/to")
+                .and_then(number_value)
+                .map(|value| value / 1000.0)
+                .or_else(|| segment.pointer("/timestamps/to").and_then(timestamp_value))
+                .or_else(|| number_field(segment, "end"))
+                .unwrap_or(start);
+            Some(TranscriptSegment { start, end, text })
+        })
+        .collect()
+}
+
+fn parse_srt_transcript(path: &Path, language: &str) -> Result<NativeTranscript, String> {
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let segments = parse_srt_segments(&content);
+    if segments.is_empty() {
+        return Err(format!(
+            "Aucun segment exploitable dans {}",
+            path.to_string_lossy()
+        ));
+    }
+    Ok(NativeTranscript {
+        backend: BACKEND_NAME.to_string(),
+        model: String::new(),
+        model_path: String::new(),
+        language: language.to_string(),
+        source_audio: String::new(),
+        preprocessed_wav: String::new(),
+        duration_seconds: segments.last().map(|segment| segment.end),
+        text: transcript_text(&segments),
+        segments,
+    })
+}
+
+fn parse_srt_segments(content: &str) -> Vec<TranscriptSegment> {
+    content
+        .split("\n\n")
+        .filter_map(|block| {
+            let mut lines = block.lines().filter(|line| !line.trim().is_empty());
+            let first = lines.next()?.trim();
+            let time_line = if first.contains("-->") {
+                first
+            } else {
+                lines.next()?.trim()
+            };
+            let (start, end) = time_line.split_once("-->")?;
+            let text = clean_text(&lines.collect::<Vec<_>>().join(" "));
+            if text.is_empty() {
+                return None;
+            }
+            Some(TranscriptSegment {
+                start: parse_timestamp(start.trim()).unwrap_or(0.0),
+                end: parse_timestamp(end.trim()).unwrap_or(0.0),
+                text,
+            })
+        })
+        .collect()
+}
+
+fn number_field(value: &Value, key: &str) -> Option<f64> {
+    value.get(key).and_then(number_value)
+}
+
+fn number_value(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|value| value as f64))
+        .or_else(|| value.as_u64().map(|value| value as f64))
+}
+
+fn timestamp_value(value: &Value) -> Option<f64> {
+    value.as_str().and_then(parse_timestamp)
+}
+
+fn parse_timestamp(value: &str) -> Option<f64> {
+    let value = value.trim().replace(',', ".");
+    let parts = value.split(':').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [hours, minutes, seconds] => Some(
+            hours.parse::<f64>().ok()? * 3600.0
+                + minutes.parse::<f64>().ok()? * 60.0
+                + seconds.parse::<f64>().ok()?,
+        ),
+        [minutes, seconds] => {
+            Some(minutes.parse::<f64>().ok()? * 60.0 + seconds.parse::<f64>().ok()?)
+        }
+        [seconds] => seconds.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn clean_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn transcript_text(segments: &[TranscriptSegment]) -> String {
+    segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn format_ts(seconds: f64, sep: &str) -> String {
+    let milliseconds = (seconds.max(0.0) * 1000.0).round() as u64;
+    let hours = milliseconds / 3_600_000;
+    let minutes = (milliseconds % 3_600_000) / 60_000;
+    let secs = (milliseconds % 60_000) / 1000;
+    let millis = milliseconds % 1000;
+    format!("{hours:02}:{minutes:02}:{secs:02}{sep}{millis:03}")
+}
+
+fn write_timestamped_txt(path: &Path, segments: &[TranscriptSegment]) -> Result<(), String> {
+    let mut content = String::new();
+    for segment in segments {
+        content.push_str(&format!(
+            "[{} - {}] {}\n\n",
+            format_ts(segment.start, "."),
+            format_ts(segment.end, "."),
+            segment.text
+        ));
+    }
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn write_markdown(path: &Path, transcript: &NativeTranscript, source: &Path) -> Result<(), String> {
+    let mut content = format!(
+        "# Transcription\n\nSource: `{}`\n\nBackend: `{}`\n\nModèle: `{}`\n\n",
+        source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("audio"),
+        transcript.backend,
+        transcript.model,
+    );
+    for segment in &transcript.segments {
+        content.push_str(&format!(
+            "`{} - {}`\n\n{}\n\n",
+            format_ts(segment.start, "."),
+            format_ts(segment.end, "."),
+            segment.text
+        ));
+    }
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn write_clean_txt(path: &Path, transcript: &NativeTranscript) -> Result<(), String> {
+    fs::write(path, transcript.text.trim()).map_err(|error| error.to_string())
+}
+
+fn write_srt(path: &Path, segments: &[TranscriptSegment]) -> Result<(), String> {
+    let mut content = String::new();
+    for (index, segment) in segments.iter().enumerate() {
+        content.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            index + 1,
+            format_ts(segment.start, ","),
+            format_ts(segment.end, ","),
+            segment.text
+        ));
+    }
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn write_segments_json(path: &Path, transcript: &NativeTranscript) -> Result<(), String> {
+    fs::write(
+        path,
+        serde_json::to_string_pretty(transcript).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn write_docx(path: &Path, transcript: &NativeTranscript, source: &Path) -> Result<(), String> {
+    let file = File::create(path).map_err(|error| error.to_string())?;
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|error| error.to_string())?;
+    zip.write_all(content_types_xml().as_bytes())
+        .map_err(|error| error.to_string())?;
+
+    zip.start_file("_rels/.rels", options)
+        .map_err(|error| error.to_string())?;
+    zip.write_all(root_rels_xml().as_bytes())
+        .map_err(|error| error.to_string())?;
+
+    zip.start_file("docProps/app.xml", options)
+        .map_err(|error| error.to_string())?;
+    zip.write_all(app_props_xml().as_bytes())
+        .map_err(|error| error.to_string())?;
+
+    zip.start_file("docProps/core.xml", options)
+        .map_err(|error| error.to_string())?;
+    zip.write_all(core_props_xml().as_bytes())
+        .map_err(|error| error.to_string())?;
+
+    zip.start_file("word/document.xml", options)
+        .map_err(|error| error.to_string())?;
+    zip.write_all(document_xml(transcript, source).as_bytes())
+        .map_err(|error| error.to_string())?;
+
+    zip.finish().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn content_types_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>"#
+}
+
+fn root_rels_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>"#
+}
+
+fn app_props_xml() -> &'static str {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Microwest Whisper</Application>
+</Properties>"#
+}
+
+fn core_props_xml() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Transcription</dc:title>
+  <dc:creator>Microwest Whisper</dc:creator>
+  <cp:lastModifiedBy>Microwest Whisper</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">{}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">{}</dcterms:modified>
+</cp:coreProperties>"#,
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    )
+}
+
+fn document_xml(transcript: &NativeTranscript, source: &Path) -> String {
+    let mut body = String::new();
+    body.push_str(&docx_paragraph("Transcription", true));
+    body.push_str(&docx_paragraph(
+        &format!(
+            "Source: {}",
+            source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("audio")
+        ),
+        false,
+    ));
+    body.push_str(&docx_paragraph(
+        &format!(
+            "Backend: {} | Modèle: {}",
+            transcript.backend, transcript.model
+        ),
+        false,
+    ));
+    for segment in &transcript.segments {
+        body.push_str(&docx_paragraph(
+            &format!(
+                "{} - {}",
+                format_ts(segment.start, "."),
+                format_ts(segment.end, ".")
+            ),
+            true,
+        ));
+        body.push_str(&docx_paragraph(&segment.text, false));
+    }
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    {}
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+  </w:body>
+</w:document>"#,
+        body
+    )
+}
+
+fn docx_paragraph(text: &str, bold: bool) -> String {
+    let run_props = if bold { "<w:rPr><w:b/></w:rPr>" } else { "" };
+    format!(
+        "<w:p><w:r>{run_props}<w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+        xml_escape(text)
+    )
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn println_outputs(outputs: &[PathBuf]) {
+    println!();
+    println!("Done. Files written:");
+    for path in outputs {
+        println!("- {}", path.to_string_lossy());
+    }
 }
 
 fn set_running(state: &State<TranscriptionState>, value: bool) -> Result<(), String> {
@@ -478,7 +1405,40 @@ fn set_running(state: &State<TranscriptionState>, value: bool) -> Result<(), Str
 }
 
 fn set_running_direct(state: &TranscriptionState, value: bool) -> Result<(), String> {
-    let mut running = state.running.lock().map_err(|_| "Etat process indisponible.".to_string())?;
+    let mut running = state
+        .running
+        .lock()
+        .map_err(|_| "Etat process indisponible.".to_string())?;
     *running = value;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_whisper_cpp_json_transcription_shape() {
+        let segments = parse_whisper_cpp_segments(&[json!({
+            "timestamps": { "from": "00:00:01,000", "to": "00:00:02,500" },
+            "offsets": { "from": 1000, "to": 2500 },
+            "text": " Bonjour   tout le monde "
+        })]);
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start, 1.0);
+        assert_eq!(segments[0].end, 2.5);
+        assert_eq!(segments[0].text, "Bonjour tout le monde");
+    }
+
+    #[test]
+    fn parses_srt_segments_without_speakers() {
+        let segments = parse_srt_segments(
+            "1\n00:00:00,000 --> 00:00:01,250\nBonjour\n\n2\n00:00:01,250 --> 00:00:02,000\nSuite\n",
+        );
+
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].text, "Bonjour");
+        assert_eq!(segments[1].start, 1.25);
+    }
 }

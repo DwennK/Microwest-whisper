@@ -32,8 +32,8 @@ const steps = ["Licence", "Audio", "Réglages", "Progression", "Résultats"] as 
 const audioExtensions = ["m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg"];
 
 const defaultRequest: Omit<TranscriptionRequest, "audio_path" | "output_dir"> = {
-  model: "large-v3",
-  asr_backend: "auto",
+  model: "large-v3-turbo-q8_0",
+  asr_backend: "whisper.cpp",
   language: "fr",
   audio_filter: "loudnorm",
   batch_size: 8,
@@ -114,7 +114,7 @@ function App() {
   const quickOutputs = useMemo(
     () =>
       outputs.filter((item) =>
-        [".transcript.docx", ".speaker-turns.md", ".speaker-segments.srt"].some((suffix) => item.path.endsWith(suffix)),
+        [".transcript.docx", ".transcript.md", ".segments.srt"].some((suffix) => item.path.endsWith(suffix)),
       ),
     [outputs],
   );
@@ -129,7 +129,7 @@ function App() {
     if (!audio || !dir) return;
     const files = await invoke<OutputFile[]>("expected_outputs", { audioPath: audio, outputDir: dir });
     setOutputs(files);
-    const previewFile = files.find((item) => item.exists && item.path.endsWith(".speaker-turns.md")) ?? files.find((item) => item.exists && item.path.endsWith(".clean.txt"));
+    const previewFile = files.find((item) => item.exists && item.path.endsWith(".transcript.md")) ?? files.find((item) => item.exists && item.path.endsWith(".clean.txt"));
     if (previewFile) {
       setPreview(await invoke<string>("read_text_preview", { path: previewFile.path }));
     }
@@ -232,14 +232,16 @@ function App() {
     setError("");
     const request: TranscriptionRequest = {
       ...settings,
+      asr_backend: "whisper.cpp",
+      diarization: false,
       audio_path: audioPath,
       output_dir: outputDir,
       work_dir: workDir,
-      speakers: settings.speaker_mode === "exact" ? settings.speakers : undefined,
-      min_speakers: settings.speaker_mode === "range" ? settings.min_speakers : undefined,
-      max_speakers: settings.speaker_mode === "range" ? settings.max_speakers : undefined,
-      hf_token: settings.hf_token?.trim() || undefined,
-      speaker_map: settings.speaker_map?.trim() || undefined,
+      speakers: undefined,
+      min_speakers: undefined,
+      max_speakers: undefined,
+      hf_token: undefined,
+      speaker_map: undefined,
     };
     await invoke("start_transcription", { request });
   }
@@ -274,6 +276,7 @@ function App() {
           <div>
             <strong>{engine?.can_run ? "Moteur prêt" : "Moteur à vérifier"}</strong>
             <p>{engine?.message ?? "Chargement du moteur..."}</p>
+            {engine && <small>{engine.backend}</small>}
           </div>
         </div>
       </aside>
@@ -286,7 +289,7 @@ function App() {
           </div>
           <div className="status-strip">
             <StatusPill ok={licenseOk} label={licenseOk ? "Licence active" : "Licence requise"} />
-            <StatusPill ok={Boolean(engine?.can_run)} label={engine?.can_run ? "Python détecté" : "Bridge incomplet"} />
+            <StatusPill ok={Boolean(engine?.can_run)} label={engine?.can_run ? "whisper.cpp prêt" : "Backend incomplet"} />
           </div>
         </header>
 
@@ -382,38 +385,39 @@ function App() {
             <div className="primary-panel">
               <SectionTitle icon={<Settings2 size={20} />} title="Paramètres transcription" />
               <div className="form-grid">
-                <Select label="Modèle" value={settings.model} onChange={(model) => setSettings({ ...settings, model })} options={["large-v3", "large-v3-turbo", "medium", "small"]} />
+                <Select label="Modèle" value={settings.model} onChange={(model) => setSettings({ ...settings, model })} options={["large-v3-turbo-q8_0", "large-v3-turbo-q5_0"]} />
                 <Select label="Langue" value={settings.language} onChange={(language) => setSettings({ ...settings, language })} options={["fr", "en", "auto"]} />
-                <Select label="Backend" value={settings.asr_backend} onChange={(asr_backend) => setSettings({ ...settings, asr_backend })} options={["auto", "whisperx", "mlx"]} />
+                <Select label="Backend" value="whisper.cpp" onChange={() => undefined} options={["whisper.cpp"]} />
                 <Select label="Filtre audio" value={settings.audio_filter} onChange={(audio_filter) => setSettings({ ...settings, audio_filter })} options={["loudnorm", "voice-clean", "none"]} />
-                <NumberField label="Batch" value={settings.batch_size} min={1} max={32} onChange={(batch_size) => setSettings({ ...settings, batch_size })} />
                 <NumberField label="Threads CPU" value={settings.threads} min={0} max={64} onChange={(threads) => setSettings({ ...settings, threads })} />
+                <Select label="Device" value={settings.device} onChange={(device) => setSettings({ ...settings, device })} options={["auto", "cpu"]} />
               </div>
               <div className="toggle-grid">
-                <Toggle label="Diarisation" checked={settings.diarization} onChange={(diarization) => setSettings({ ...settings, diarization })} />
                 <Toggle label="Nettoyer silences" checked={settings.trim_silence} onChange={(trim_silence) => setSettings({ ...settings, trim_silence })} />
                 <Toggle label="Forcer recalcul" checked={settings.force} onChange={(force) => setSettings({ ...settings, force })} />
               </div>
             </div>
 
             <div className="secondary-panel">
-              <SectionTitle icon={<History size={20} />} title="Diarisation et relance" />
-              <Select label="Mode locuteurs" value={settings.speaker_mode} onChange={(speaker_mode) => setSettings({ ...settings, speaker_mode: speaker_mode as TranscriptionRequest["speaker_mode"] })} options={["auto", "exact", "range"]} />
-              {settings.speaker_mode === "exact" && <NumberField label="Nombre exact" value={settings.speakers ?? 2} min={1} max={24} onChange={(speakers) => setSettings({ ...settings, speakers })} />}
-              {settings.speaker_mode === "range" && (
-                <div className="form-grid tight">
-                  <NumberField label="Min" value={settings.min_speakers ?? 2} min={1} max={24} onChange={(min_speakers) => setSettings({ ...settings, min_speakers })} />
-                  <NumberField label="Max" value={settings.max_speakers ?? 5} min={1} max={24} onChange={(max_speakers) => setSettings({ ...settings, max_speakers })} />
+              <SectionTitle icon={<History size={20} />} title="Moteur local" />
+              <dl className="details engine-details">
+                <div>
+                  <dt>Backend</dt>
+                  <dd>{engine?.backend ?? "whisper.cpp"}</dd>
                 </div>
-              )}
-              <label className="field">
-                <span>Token Hugging Face</span>
-                <input type="password" value={settings.hf_token} onChange={(event) => setSettings({ ...settings, hf_token: event.target.value })} placeholder="Seulement pour diarisation" />
-              </label>
-              <label className="field">
-                <span>Renommage locuteurs</span>
-                <input value={settings.speaker_map} onChange={(event) => setSettings({ ...settings, speaker_map: event.target.value })} placeholder="SPEAKER_00=Alice,SPEAKER_01=Bruno" />
-              </label>
+                <div>
+                  <dt>whisper-cli</dt>
+                  <dd>{engine?.whisper_cli || "non détecté"}</dd>
+                </div>
+                <div>
+                  <dt>FFmpeg</dt>
+                  <dd>{engine?.ffmpeg || "non détecté"}</dd>
+                </div>
+                <div>
+                  <dt>Modèle</dt>
+                  <dd>{engine?.model_path || "non détecté"}</dd>
+                </div>
+              </dl>
             </div>
           </section>
         )}
@@ -425,7 +429,7 @@ function App() {
               <div className="progress-head">
                 <div>
                   <strong>{stage}</strong>
-                  <span>{running ? "Process Python en cours" : "Prêt à lancer"}</span>
+                  <span>{running ? "Process natif en cours" : "Prêt à lancer"}</span>
                 </div>
                 <button className="primary" type="button" disabled={!canStart} onClick={startTranscription}>
                   {running ? <Loader2 className="spin" size={17} /> : <Play size={17} />}

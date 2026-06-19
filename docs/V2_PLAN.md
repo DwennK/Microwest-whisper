@@ -1,5 +1,8 @@
 # Plan Tauri
 
+> Note: ce document conserve l'audit historique du moteur Python/WhisperX.
+> L'etat courant du backend natif est documente dans `docs/WHISPER_CPP_BACKEND.md`.
+
 ## Audit de l'ancienne app
 
 Fichiers principaux avant migration:

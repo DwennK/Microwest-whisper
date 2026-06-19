@@ -77,7 +77,12 @@ pub async fn activate_license(license_key: String) -> Result<LicenseCheck, Strin
 
     Ok(LicenseCheck {
         ok: false,
-        message: license_error_message(payload.get("reason").and_then(Value::as_str).unwrap_or("unknown")),
+        message: license_error_message(
+            payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        ),
         state: read_state(),
         online: true,
     })
@@ -162,10 +167,28 @@ pub async fn validate_license(force_online: bool) -> Result<LicenseCheck, String
 
     Ok(LicenseCheck {
         ok: false,
-        message: license_error_message(payload.get("reason").and_then(Value::as_str).unwrap_or("unknown")),
+        message: license_error_message(
+            payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        ),
         state,
         online: true,
     })
+}
+
+pub fn local_license_allows_run() -> Result<(), String> {
+    if env::var("MICROWEST_LICENSE_BYPASS").ok().as_deref() == Some("1") {
+        return Ok(());
+    }
+
+    let state = read_state();
+    if cached_license_valid(&state) {
+        return Ok(());
+    }
+
+    Err(license_status_text(&state))
 }
 
 fn api_base() -> String {
@@ -195,7 +218,9 @@ fn license_state_path() -> PathBuf {
             .join("Microwest Whisper")
             .join("license.json")
     } else {
-        home.join(".config").join("microwest-whisper").join("license.json")
+        home.join(".config")
+            .join("microwest-whisper")
+            .join("license.json")
     }
 }
 
@@ -272,7 +297,10 @@ fn save_success(payload: &Value, license_key: &str) -> Result<Value, String> {
     let object = object_mut(&mut state);
     object.insert(
         "license_key".to_string(),
-        json!(payload.get("licenseKey").and_then(Value::as_str).unwrap_or(license_key)),
+        json!(payload
+            .get("licenseKey")
+            .and_then(Value::as_str)
+            .unwrap_or(license_key)),
     );
     object.insert(
         "product_name".to_string(),
@@ -290,7 +318,10 @@ fn save_success(payload: &Value, license_key: &str) -> Result<Value, String> {
     );
     object.insert(
         "release_url".to_string(),
-        json!(payload.get("releaseUrl").and_then(Value::as_str).unwrap_or_default()),
+        json!(payload
+            .get("releaseUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()),
     );
     object.insert(
         "subscription_status".to_string(),
@@ -301,9 +332,15 @@ fn save_success(payload: &Value, license_key: &str) -> Result<Value, String> {
     );
     object.insert(
         "valid_until".to_string(),
-        json!(payload.get("validUntil").and_then(Value::as_str).unwrap_or_default()),
+        json!(payload
+            .get("validUntil")
+            .and_then(Value::as_str)
+            .unwrap_or_default()),
     );
-    object.insert("last_validated_at".to_string(), json!(Utc::now().to_rfc3339()));
+    object.insert(
+        "last_validated_at".to_string(),
+        json!(Utc::now().to_rfc3339()),
+    );
     object.insert("machine_id".to_string(), json!(current_machine_id));
     write_state(&state)?;
     Ok(state)
@@ -334,7 +371,12 @@ fn cached_license_valid(state: &Value) -> bool {
 }
 
 fn license_status_text(state: &Value) -> String {
-    if state.get("license_key").and_then(Value::as_str).unwrap_or_default().is_empty() {
+    if state
+        .get("license_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
         return "Aucune licence activée.".to_string();
     }
 
@@ -350,7 +392,9 @@ fn license_status_text(state: &Value) -> String {
             .unwrap_or("active");
         return format!(
             "Abonnement {subscription_status}. Licence valide jusqu'au {}.",
-            valid_until.with_timezone(&chrono::Local).format("%d.%m.%Y %H:%M")
+            valid_until
+                .with_timezone(&chrono::Local)
+                .format("%d.%m.%Y %H:%M")
         );
     }
 

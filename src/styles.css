@@ -166,6 +166,13 @@ button.primary:hover:not(:disabled) {
   line-height: 1.45;
 }
 
+.engine-box small {
+  display: block;
+  margin-top: 8px;
+  color: #b8dfd8;
+  font-size: 12px;
+}
+
 .dot {
   width: 9px;
   height: 9px;
@@ -389,6 +396,10 @@ select:focus {
   margin: 0;
   overflow-wrap: anywhere;
   color: #172026;
+}
+
+.engine-details dd {
+  font-size: 12px;
 }
 
 .file-target {

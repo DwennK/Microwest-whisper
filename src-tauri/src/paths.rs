@@ -3,14 +3,13 @@ use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 
 const OUTPUT_SUFFIXES: &[(&str, &str)] = &[
-    (".speaker-turns.txt", "TXT"),
-    (".speaker-turns.md", "Markdown"),
+    (".transcript.txt", "TXT"),
+    (".transcript.md", "Markdown"),
     (".clean.txt", "Texte propre"),
-    (".speaker-segments.srt", "SRT"),
+    (".segments.srt", "SRT"),
     (".segments.json", "Segments JSON"),
-    (".notes.md", "Notes Markdown"),
     (".transcript.docx", "DOCX"),
-    (".whisperx.json", "WhisperX JSON"),
+    (".whispercpp.json", "whisper.cpp JSON"),
 ];
 
 #[derive(Debug, Serialize)]
@@ -41,6 +40,14 @@ pub fn expected_output_paths(audio: &Path, output_dir: &Path) -> Vec<OutputFile>
             }
         })
         .collect()
+}
+
+pub fn work_wav_path(audio: &Path, work_dir: &Path) -> PathBuf {
+    work_dir.join(format!("{}.16k-mono.wav", transcript_stem(audio)))
+}
+
+pub fn transcript_output_stem(audio: &Path) -> String {
+    transcript_stem(audio)
 }
 
 fn transcript_stem(audio: &Path) -> String {
