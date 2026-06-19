@@ -2,12 +2,12 @@
 
 ## Etat livre
 
-- Tauri appelle un backend Rust natif, sans lancer `engine/python/transcribe.py`.
+- Tauri appelle un backend Rust natif, sans moteur Python.
 - Le backend cherche `whisper-cli`, FFmpeg et un modele local au demarrage.
 - Si le modele selectionne est absent, l'UI peut le télécharger depuis `ggerganov/whisper.cpp`.
 - La conversion audio passe par FFmpeg vers WAV PCM 16 kHz mono.
 - `whisper-cli` est appele avec sortie JSON et SRT.
-- Les segments sont normalises sans diarisation ni labels `SPEAKER_00`.
+- Les segments sont normalises sans diarisation ni labels locuteur.
 - Les exports generes sont:
   - `*.transcript.txt`
   - `*.transcript.md`
@@ -86,4 +86,4 @@ Nettoyage:
 - Compiler ou recuperer FFmpeg par plateforme avec licence compatible distribution.
 - Valider les binaires `whisper-cli`/FFmpeg dans les bundles packagés.
 - Signer/notariser macOS, signer Windows, valider Linux AppImage/deb/rpm.
-- Supprimer definitivement `engine/python` quand la parite de production est confirmee.
+- Valider les exports sur un panel de fichiers longs avant release commerciale.

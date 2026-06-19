@@ -42,19 +42,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal
 
       - name: Install frontend dependencies
         run: npm ci
-
-      - name: Run Python unit tests
-        run: python -m unittest discover -v
 
       - name: Build frontend
         run: npm run build:frontend

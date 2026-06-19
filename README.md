@@ -10,12 +10,10 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Backend natif Rust qui lance `whisper-cli`.
 - Conversion audio via FFmpeg vers WAV PCM 16 kHz mono.
 - Modèles Whisper GGML téléchargés à la demande, hors Git.
-- Pas de diarisation, pas de pyannote, pas de labels `SPEAKER_00`.
+- Pas de diarisation, pas de pyannote, pas de labels locuteur.
 - Licence IA Swiss conservée.
 - Auto-update manuel via GitHub Releases.
 - Builds CI macOS, Windows et Linux.
-
-L'ancien moteur Python/WhisperX reste dans `engine/python` comme référence de migration, mais l'application principale ne l'utilise plus.
 
 ## Fonctionnalités
 
@@ -42,10 +40,8 @@ src-tauri/src/license.rs     Licence IA Swiss
 src-tauri/src/transcription.rs
                              Backend transcription whisper.cpp
 engine/whispercpp/           Racine des binaires natifs et modèles locaux
-engine/python/               Ancien moteur Python, gardé pour référence
 scripts/                     Préparation ressources et manifests release
-docs/                        Notes backend, updater et historique migration
-tests/                       Tests Python historiques sur les helpers d'export
+docs/                        Notes backend et updater
 ```
 
 ## Prérequis développement
@@ -54,7 +50,7 @@ Pour développer l'app, il faut installer localement:
 
 - Node.js + npm;
 - Rust + Cargo;
-- Python 3 pour les tests historiques et le script de récupération des binaires.
+- Python 3 pour le script de récupération des binaires natifs.
 
 L'utilisateur final n'a pas besoin de ces outils.
 
@@ -217,16 +213,12 @@ export MICROWEST_LICENSE_STATE=/tmp/microwest-license.json
 ```bash
 npm run build:frontend
 cargo check --manifest-path src-tauri/Cargo.toml
-python3 -m unittest discover -v
 ```
-
-Les tests Python actuels couvrent surtout les helpers historiques d'exports et de chemins. Ils ne chargent pas de modèle Whisper.
 
 ## Documentation
 
 - [docs/WHISPER_CPP_BACKEND.md](docs/WHISPER_CPP_BACKEND.md): détails du backend natif.
 - [docs/UPDATER.md](docs/UPDATER.md): signature et publication auto-update.
-- [docs/V2_PLAN.md](docs/V2_PLAN.md): audit historique de la migration Python vers Tauri.
 
 ## Notes packaging
 
@@ -235,5 +227,4 @@ Avant une distribution commerciale complète:
 - signer et notariser macOS;
 - signer Windows pour réduire les alertes SmartScreen/antivirus;
 - valider les bundles Linux AppImage/deb/rpm sur distributions cibles;
-- vérifier la licence de redistribution FFmpeg selon les binaires utilisés;
-- supprimer `engine/python` quand la migration native est définitivement validée.
+- vérifier la licence de redistribution FFmpeg selon les binaires utilisés.

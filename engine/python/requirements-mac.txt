@@ -1,2 +1,0 @@
--r requirements.txt
-mlx-whisper==0.4.3
