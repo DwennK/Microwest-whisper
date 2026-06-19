@@ -8,6 +8,7 @@
     "build": "tauri build",
     "tauri": "tauri",
     "dev:frontend": "vite --host 127.0.0.1 --port 1420",
+    "prepare:whispercpp": "node scripts/prepare-whispercpp-resources.mjs",
     "build:frontend": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 1420"
   },

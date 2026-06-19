@@ -21,7 +21,7 @@ Prerequis:
 
 - Node.js et npm;
 - Rust et Cargo;
-- en mode dev: `whisper-cli`, FFmpeg et un modele GGML/GGUF local.
+- en mode dev: `whisper-cli` et FFmpeg.
 
 Installer le frontend:
 
@@ -34,8 +34,9 @@ Configurer le backend natif en mode dev:
 ```bash
 export MICROWEST_WHISPER_CLI=/absolute/path/to/whisper-cli
 export MICROWEST_FFMPEG=/absolute/path/to/ffmpeg
-export MICROWEST_WHISPER_MODEL=/absolute/path/to/ggml-large-v3-turbo-q8_0.bin
 ```
+
+L'app peut télécharger les modèles `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0` au premier usage. Pour forcer un modèle local en développement, utilise `MICROWEST_WHISPER_MODEL`.
 
 Lancer l'app:
 
@@ -49,6 +50,7 @@ Variables utiles:
 - `MICROWEST_WHISPER_CLI`: executable `whisper-cli` a utiliser en developpement.
 - `MICROWEST_FFMPEG`: executable FFmpeg a utiliser en developpement.
 - `MICROWEST_WHISPER_MODEL`: modele GGML/GGUF local a utiliser en developpement.
+- `MICROWEST_MODEL_DIR`: dossier alternatif pour les modèles téléchargés en developpement.
 - `MICROWEST_LICENSE_API_BASE`: API licence alternative, par defaut `https://iaswiss.com/api/licenses`.
 - `MICROWEST_LICENSE_STATE`: chemin de test pour le fichier `license.json`.
 
@@ -58,7 +60,15 @@ Variables utiles:
 npm run build
 ```
 
-Le build Tauri lance `tsc && vite build`, compile l'application Rust, puis produit les bundles de la plateforme courante.
+Le build Tauri prepare d'abord les ressources `whisper.cpp` pour la plateforme courante, lance `tsc && vite build`, compile l'application Rust, puis produit les bundles.
+
+Les binaires natifs restent hors Git. Avant un build release, place les fichiers dans `engine/whispercpp/bin/<platform>/`, puis `npm run build` copie uniquement la plateforme courante vers `src-tauri/resources/engine/whispercpp`.
+
+Pour preparer explicitement une autre plateforme:
+
+```bash
+MICROWEST_BUNDLE_PLATFORM=windows-x86_64 npm run prepare:whispercpp
+```
 
 ## Licence
 
@@ -85,6 +95,8 @@ Aucune cle Stripe n'est embarquee dans l'application. Le backend IA Swiss verifi
 - activation et validation via l'API IA Swiss existante;
 - selection audio et dossier output via les dialogues Tauri;
 - parametrage modele, langue, threads, device CPU et filtres audio;
+- téléchargement à la demande du modèle local `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0`;
+- suppression des modèles téléchargés depuis l'app;
 - lancement de `whisper-cli` en process separe depuis le backend Rust;
 - progression derivee des logs existants;
 - conversion audio vers WAV 16 kHz mono via FFmpeg;
@@ -105,8 +117,8 @@ npm run build:frontend
 
 En developpement, l'app peut utiliser les variables `MICROWEST_WHISPER_CLI`, `MICROWEST_FFMPEG` et `MICROWEST_WHISPER_MODEL`. Pour un produit vendable sans installation manuelle:
 
-- macOS: bundle `whisper-cli`, FFmpeg et modele local, executables signes, notarisation Apple;
-- Windows: bundle `whisper-cli.exe`, `ffmpeg.exe` et modele local, code signing, attention antivirus;
-- Linux: AppImage/deb/rpm avec `whisper-cli`, FFmpeg et modele local, compatibilite glibc documentee;
-- choisir le modele final a livrer: `large-v3-turbo-q8_0` pour qualite/taille elevee, ou `large-v3-turbo-q5_0` pour un bundle plus leger;
+- macOS: bundle `whisper-cli` et FFmpeg, executables signes, notarisation Apple;
+- Windows: bundle `whisper-cli.exe`, ses DLLs `whisper.cpp`/GGML et `ffmpeg.exe`, code signing, attention antivirus;
+- Linux: AppImage/deb/rpm avec `whisper-cli` et FFmpeg, compatibilite glibc documentee;
+- garder les modèles hors Git et les télécharger dans le dossier data utilisateur;
 - ajouter les binaires par plateforme dans `engine/whispercpp/bin/<plateforme>/` avant les builds release.

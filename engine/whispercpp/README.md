@@ -13,11 +13,11 @@ engine/whispercpp/
     macos-x86_64/ffmpeg
     windows-x86_64/whisper-cli.exe
     windows-x86_64/ffmpeg.exe
+    windows-x86_64/*.dll
     linux-x86_64/whisper-cli
     linux-x86_64/ffmpeg
   models/
-    ggml-large-v3-turbo-q8_0.bin
-    ggml-large-v3-turbo-q5_0.bin
+    optional preloaded GGML/GGUF models
 ```
 
 Development overrides:
@@ -26,7 +26,15 @@ Development overrides:
 - `MICROWEST_WHISPER_CLI`: absolute path to a `whisper-cli` executable.
 - `MICROWEST_FFMPEG`: absolute path to an FFmpeg executable.
 - `MICROWEST_WHISPER_MODEL`: absolute path to a local GGML/GGUF model.
+- `MICROWEST_MODEL_DIR`: alternate directory for downloaded models.
 
-The Tauri app currently resolves these paths at runtime. Final release packaging
-still needs signed per-platform `whisper-cli` and FFmpeg binaries plus one chosen
-local model in `models/`.
+The Tauri app resolves these paths at runtime. Final release packaging still
+needs signed per-platform `whisper-cli` and FFmpeg binaries. On Windows,
+keep the `whisper.cpp`/GGML DLLs next to `whisper-cli.exe`.
+
+`npm run build` runs `scripts/prepare-whispercpp-resources.mjs`, which stages
+only the current platform into `src-tauri/resources/engine/whispercpp` before
+Tauri bundles the app.
+
+Models are downloaded on demand into the user's app data directory unless a
+model is preloaded here or forced with `MICROWEST_WHISPER_MODEL`.
