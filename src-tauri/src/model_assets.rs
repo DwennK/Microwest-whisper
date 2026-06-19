@@ -109,6 +109,10 @@ pub fn model_status(engine_root: &Path) -> ModelInventory {
     }
 }
 
+pub fn models_dir_path() -> PathBuf {
+    downloaded_models_dir()
+}
+
 pub async fn download_model(
     app: &AppHandle,
     engine_root: &Path,

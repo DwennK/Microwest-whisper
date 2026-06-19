@@ -14,16 +14,30 @@ export interface LicenseCheck {
 export interface EngineStatus {
   backend: string;
   engine_root: string;
-  python: string;
-  transcribe_path: string;
   whisper_cli: string;
   ffmpeg: string;
   model_path: string;
   default_model: string;
   default_output_dir: string;
   default_work_dir: string;
+  platform: string;
+  architecture: string;
   can_run: boolean;
   message: string;
+}
+
+export interface AppDiagnostics {
+  name: string;
+  version: string;
+  backend: string;
+  platform: string;
+  architecture: string;
+  engine_root: string;
+  default_output_dir: string;
+  default_work_dir: string;
+  model_dir: string;
+  license_state_path: string;
+  update_endpoint: string;
 }
 
 export interface OutputFile {
@@ -73,7 +87,7 @@ export interface HistoryRecord {
 }
 
 export interface TranscriptionEvent {
-  kind: "started" | "log" | "completed" | "failed";
+  kind: "started" | "log" | "completed" | "failed" | "cancelled";
   stream: string;
   line: string;
   stage: string;
@@ -85,20 +99,10 @@ export interface TranscriptionRequest {
   output_dir: string;
   work_dir?: string;
   model: string;
-  asr_backend: string;
   language: string;
   audio_filter: string;
-  batch_size: number;
   threads: number;
   device: string;
-  compute_type: string;
-  diarization: boolean;
-  speaker_mode: "auto" | "exact" | "range";
-  speakers?: number;
-  min_speakers?: number;
-  max_speakers?: number;
   trim_silence: boolean;
   force: boolean;
-  speaker_map?: string;
-  hf_token?: string;
 }

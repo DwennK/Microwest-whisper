@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::{env, fs, path::PathBuf};
 
-const APP_VERSION: &str = "0.2.0";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_API_BASE: &str = "https://iaswiss.com/api/licenses";
 
 #[derive(Debug, Serialize)]
@@ -198,7 +198,7 @@ fn api_base() -> String {
         .to_string()
 }
 
-fn license_state_path() -> PathBuf {
+pub fn license_state_path() -> PathBuf {
     if let Ok(path) = env::var("MICROWEST_LICENSE_STATE") {
         return PathBuf::from(path);
     }

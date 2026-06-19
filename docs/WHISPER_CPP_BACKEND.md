@@ -8,6 +8,9 @@
 - La conversion audio passe par FFmpeg vers WAV PCM 16 kHz mono.
 - `whisper-cli` est appele avec sortie JSON et SRT.
 - Les segments sont normalises sans diarisation ni labels locuteur.
+- L'execution surveille FFmpeg et `whisper-cli` avec annulation, timeout et messages d'erreur par composant.
+- Les WAV temporaires sont nettoyes automatiquement apres transcription, sauf si `MICROWEST_KEEP_TEMP_WAV=1`.
+- L'UI expose la plateforme et l'architecture detectees pour diagnostiquer les bundles natifs.
 - Les exports generes sont:
   - `*.transcript.txt`
   - `*.transcript.md`
@@ -33,6 +36,11 @@ Ordre de resolution:
 3. Dossier repo ou ressource Tauri `engine/whispercpp`.
 4. Dossier modèles téléchargés de l'utilisateur.
 5. `PATH` pour `whisper-cli` et FFmpeg en mode dev.
+
+Timeout:
+
+- Par defaut chaque commande externe peut tourner jusqu'a 8 heures.
+- `MICROWEST_TRANSCRIPTION_TIMEOUT_SECONDS` permet de reduire ou augmenter ce delai.
 
 Les modèles téléchargés sont stockés hors Git:
 

@@ -15,6 +15,7 @@ fn main() {
             license::activate_license,
             license::validate_license,
             transcription::engine_status,
+            transcription::app_diagnostics,
             transcription::model_status,
             transcription::download_model,
             transcription::delete_downloaded_models,
@@ -22,6 +23,7 @@ fn main() {
             transcription::read_history,
             transcription::read_text_preview,
             transcription::start_transcription,
+            transcription::cancel_transcription,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Microwest Whisper");

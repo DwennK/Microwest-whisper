@@ -9,12 +9,16 @@ import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import {
   Check,
   CircleAlert,
+  CircleStop,
   Clock3,
+  Cpu,
   Download,
   FileAudio,
   FileText,
   FolderOpen,
+  HardDrive,
   History,
+  Info,
   Loader2,
   Play,
   RefreshCw,
@@ -24,6 +28,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type {
+  AppDiagnostics,
   EngineStatus,
   HistoryRecord,
   LicenseCheck,
@@ -35,32 +40,33 @@ import type {
   TranscriptionRequest,
 } from "./types";
 
-const steps = ["Licence", "Audio", "Réglages", "Progression", "Résultats"] as const;
+const steps = ["Licence", "Audio", "Réglages", "Progression", "Résultats", "À propos"] as const;
+const navSteps = ["Audio", "Réglages", "Progression", "Résultats", "À propos"] as const;
 const audioExtensions = ["m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg"];
 
 const defaultRequest: Omit<TranscriptionRequest, "audio_path" | "output_dir"> = {
   model: "large-v3-turbo-q8_0",
-  asr_backend: "whisper.cpp",
   language: "fr",
   audio_filter: "loudnorm",
-  batch_size: 8,
   threads: 0,
   device: "auto",
-  compute_type: "auto",
-  diarization: false,
-  speaker_mode: "auto",
-  speakers: 2,
-  min_speakers: 2,
-  max_speakers: 5,
   trim_silence: false,
   force: false,
-  speaker_map: "",
-  hf_token: "",
 };
+
+const stageSteps = [
+  { stage: "Préparation", min: 5 },
+  { stage: "Préparation audio", min: 10 },
+  { stage: "Chargement modèle", min: 25 },
+  { stage: "Transcription", min: 35 },
+  { stage: "Exports", min: 92 },
+  { stage: "Terminé", min: 100 },
+];
 
 function App() {
   const [activeStep, setActiveStep] = useState(0);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
+  const [appInfo, setAppInfo] = useState<AppDiagnostics | null>(null);
   const [license, setLicense] = useState<LicenseSnapshot | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseBusy, setLicenseBusy] = useState(false);
@@ -76,6 +82,9 @@ function App() {
   const [running, setRunning] = useState(false);
   const [stage, setStage] = useState("En attente");
   const [progress, setProgress] = useState(0);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [showLogs, setShowLogs] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [preview, setPreview] = useState("");
@@ -96,12 +105,14 @@ function App() {
 
     const boot = async () => {
       try {
-        const [engineStatus, licenseState, modelState] = await Promise.all([
+        const [engineStatus, licenseState, modelState, diagnostics] = await Promise.all([
           invoke<EngineStatus>("engine_status"),
           invoke<LicenseSnapshot>("read_license_state"),
           invoke<ModelInventory>("model_status"),
+          invoke<AppDiagnostics>("app_diagnostics"),
         ]);
         setEngine(engineStatus);
+        setAppInfo(diagnostics);
         setModelInventory(modelState);
         setOutputDir(engineStatus.default_output_dir);
         setWorkDir(engineStatus.default_work_dir);
@@ -128,6 +139,14 @@ function App() {
       unlistenModel?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (!running || !startedAt) return;
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, startedAt]);
 
   useEffect(() => {
     if (!audioPath || !outputDir) return;
@@ -173,6 +192,9 @@ function App() {
       setRunning(true);
       setProgress(5);
       setStage(event.stage);
+      const now = Date.now();
+      setStartedAt(now);
+      setElapsedSeconds(0);
       setLogLines([event.line]);
       setActiveStep(3);
       return;
@@ -182,6 +204,7 @@ function App() {
       setRunning(false);
       setProgress(100);
       setStage("Terminé");
+      setStartedAt(null);
       setLogLines((lines) => [...lines, event.line]);
       void refreshOutputs();
       void refreshHistory();
@@ -189,8 +212,17 @@ function App() {
       return;
     }
 
+    if (event.kind === "cancelled") {
+      setRunning(false);
+      setStartedAt(null);
+      setStage("Annulé");
+      setLogLines((lines) => [...lines, event.line]);
+      return;
+    }
+
     if (event.kind === "failed") {
       setRunning(false);
+      setStartedAt(null);
       setError(event.line);
       setStage("Échec");
       setLogLines((lines) => [...lines, event.line]);
@@ -349,21 +381,32 @@ function App() {
   async function startTranscription() {
     if (!canStart) return;
     setError("");
+    setProgress(0);
+    setStage("Préparation");
+    setLogLines([]);
+    setShowLogs(false);
     const request: TranscriptionRequest = {
       ...settings,
-      asr_backend: "whisper.cpp",
-      diarization: false,
       audio_path: audioPath,
       output_dir: outputDir,
       work_dir: workDir,
-      speakers: undefined,
-      min_speakers: undefined,
-      max_speakers: undefined,
-      hf_token: undefined,
-      speaker_map: undefined,
     };
     await invoke("start_transcription", { request });
   }
+
+  async function cancelTranscription() {
+    if (!running) return;
+    try {
+      await invoke("cancel_transcription");
+    } catch (cancelError) {
+      setError(String(cancelError));
+    }
+  }
+
+  const estimatedRemaining =
+    running && progress > 10 && progress < 100
+      ? Math.max(0, Math.round((elapsedSeconds / progress) * (100 - progress)))
+      : null;
 
   return (
     <main className="app-shell">
@@ -377,17 +420,20 @@ function App() {
         </div>
 
         <nav className="steps">
-          {steps.map((step, index) => (
+          {navSteps.map((step, index) => {
+            const stepIndex = index + 1;
+            return (
             <button
               key={step}
-              className={index === activeStep ? "step is-active" : "step"}
+              className={stepIndex === activeStep ? "step is-active" : "step"}
               type="button"
-              onClick={() => setActiveStep(index)}
+              onClick={() => setActiveStep(stepIndex)}
             >
               <span>{index + 1}</span>
               {step}
             </button>
-          ))}
+            );
+          })}
         </nav>
 
         <div className="engine-box">
@@ -433,10 +479,12 @@ function App() {
         )}
 
         {activeStep === 0 && (
-          <section className="screen two-column">
+          <section className={licenseOk ? "screen two-column license-compact" : "screen two-column"}>
             <div className="primary-panel">
               <SectionTitle icon={<ShieldCheck size={20} />} title="Licence IA Swiss" />
-              <p className="muted">{license?.status_text ?? "Validation de la licence au lancement..."}</p>
+              <p className="muted">{licenseOk ? "Licence active." : license?.status_text ?? "Validation de la licence au lancement..."}</p>
+              {!licenseOk && (
+                <>
               <label className="field">
                 <span>Clé de licence</span>
                 <input
@@ -455,6 +503,20 @@ function App() {
                   Vérifier
                 </button>
               </div>
+                </>
+              )}
+              {licenseOk && (
+                <div className="action-row">
+                  <button type="button" disabled={licenseBusy || !license?.state?.license_key} onClick={validateLicenseOnline}>
+                    {licenseBusy ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+                    Revérifier
+                  </button>
+                  <button className="primary" type="button" onClick={() => setActiveStep(1)}>
+                    <FileAudio size={17} />
+                    Continuer
+                  </button>
+                </div>
+              )}
               {licenseMessage && <p className="inline-status">{licenseMessage}</p>}
             </div>
             <div className="secondary-panel">
@@ -471,6 +533,10 @@ function App() {
                 <div>
                   <dt>Validité locale</dt>
                   <dd>{String(license?.state?.valid_until ?? "aucune")}</dd>
+                </div>
+                <div>
+                  <dt>Etat local</dt>
+                  <dd>{licenseOk ? "valide" : "à vérifier"}</dd>
                 </div>
               </dl>
             </div>
@@ -538,6 +604,10 @@ function App() {
                   <dd>{engine?.backend ?? "whisper.cpp"}</dd>
                 </div>
                 <div>
+                  <dt>Plateforme</dt>
+                  <dd>{engine ? `${engine.platform} · ${engine.architecture}` : "détection..."}</dd>
+                </div>
+                <div>
                   <dt>whisper-cli</dt>
                   <dd>{engine?.whisper_cli || "non détecté"}</dd>
                 </div>
@@ -595,17 +665,39 @@ function App() {
               <div className="progress-head">
                 <div>
                   <strong>{stage}</strong>
-                  <span>{running ? "Process natif en cours" : "Prêt à lancer"}</span>
+                  <span>
+                    {running
+                      ? `En cours · ${formatDuration(elapsedSeconds)} écoulé${estimatedRemaining !== null ? ` · ~${formatDuration(estimatedRemaining)} restantes` : ""}`
+                      : "Prêt à lancer"}
+                  </span>
                 </div>
-                <button className="primary" type="button" disabled={!canStart} onClick={startTranscription}>
-                  {running ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
-                  Lancer
-                </button>
+                <div className="action-row compact-actions">
+                  <button className="primary" type="button" disabled={!canStart} onClick={startTranscription}>
+                    {running ? <Loader2 className="spin" size={17} /> : <Play size={17} />}
+                    Lancer
+                  </button>
+                  <button type="button" disabled={!running} onClick={cancelTranscription}>
+                    <CircleStop size={17} />
+                    Annuler
+                  </button>
+                </div>
               </div>
               <div className="progress-bar" aria-label="Progression transcription">
                 <span style={{ width: `${progress}%` }} />
               </div>
-              <pre className="log-view">{logLines.length ? logLines.join("\n") : "Le journal apparaîtra ici."}</pre>
+              <div className="stage-grid">
+                {stageSteps.map((item) => (
+                  <div className={item.stage === stage ? "stage-card is-current" : progress >= item.min ? "stage-card is-done" : "stage-card"} key={item.stage}>
+                    <span />
+                    <strong>{item.stage}</strong>
+                  </div>
+                ))}
+              </div>
+              <button className="log-toggle" type="button" onClick={() => setShowLogs((value) => !value)}>
+                <Info size={16} />
+                {showLogs ? "Masquer les détails" : "Détails techniques"}
+              </button>
+              {showLogs && <pre className="log-view">{logLines.length ? logLines.join("\n") : "Le journal apparaîtra ici."}</pre>}
             </div>
           </section>
         )}
@@ -661,6 +753,75 @@ function App() {
             <div className="preview-panel">
               <SectionTitle icon={<FileText size={20} />} title="Aperçu" />
               <pre>{preview || "Aucun aperçu Markdown ou texte disponible."}</pre>
+            </div>
+          </section>
+        )}
+
+        {activeStep === 5 && (
+          <section className="screen two-column">
+            <div className="primary-panel">
+              <SectionTitle icon={<Info size={20} />} title="À propos" />
+              <dl className="details">
+                <div>
+                  <dt>Application</dt>
+                  <dd>{appInfo ? `${appInfo.name} ${appInfo.version}` : "Microwest Whisper"}</dd>
+                </div>
+                <div>
+                  <dt>Backend</dt>
+                  <dd>{appInfo?.backend ?? engine?.backend ?? "whisper.cpp"}</dd>
+                </div>
+                <div>
+                  <dt>Plateforme</dt>
+                  <dd>{appInfo ? `${appInfo.platform} · ${appInfo.architecture}` : "détection..."}</dd>
+                </div>
+                <div>
+                  <dt>Licence</dt>
+                  <dd>{licenseOk ? "active" : license?.status_text ?? "à vérifier"}</dd>
+                </div>
+                <div>
+                  <dt>Updater</dt>
+                  <dd>{appInfo?.update_endpoint ?? "GitHub Releases"}</dd>
+                </div>
+              </dl>
+            </div>
+            <div className="secondary-panel">
+              <SectionTitle icon={<HardDrive size={20} />} title="Chemins locaux" />
+              <dl className="details engine-details">
+                <div>
+                  <dt>Ressources moteur</dt>
+                  <dd>{appInfo?.engine_root ?? engine?.engine_root ?? "non détecté"}</dd>
+                </div>
+                <div>
+                  <dt>Modèles</dt>
+                  <dd>{appInfo?.model_dir ?? modelInventory?.models_dir ?? "non détecté"}</dd>
+                </div>
+                <div>
+                  <dt>Sorties</dt>
+                  <dd>{appInfo?.default_output_dir ?? outputDir}</dd>
+                </div>
+                <div>
+                  <dt>Travail temporaire</dt>
+                  <dd>{appInfo?.default_work_dir ?? workDir}</dd>
+                </div>
+                <div>
+                  <dt>Licence locale</dt>
+                  <dd>{appInfo?.license_state_path ?? "non détecté"}</dd>
+                </div>
+              </dl>
+              <div className="model-actions">
+                <button type="button" disabled={!modelInventory?.models_dir} onClick={() => modelInventory?.models_dir && openPath(modelInventory.models_dir)}>
+                  <HardDrive size={17} />
+                  Modèles
+                </button>
+                <button type="button" disabled={!outputDir} onClick={() => outputDir && openPath(outputDir)}>
+                  <FolderOpen size={17} />
+                  Sorties
+                </button>
+                <button type="button" disabled={!engine?.engine_root} onClick={() => engine?.engine_root && openPath(engine.engine_root)}>
+                  <Cpu size={17} />
+                  Moteur
+                </button>
+              </div>
             </div>
           </section>
         )}

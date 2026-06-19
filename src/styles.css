@@ -401,6 +401,10 @@ select:focus {
   margin-top: 14px;
 }
 
+.compact-actions {
+  margin-top: 0;
+}
+
 .details {
   display: grid;
   gap: 14px;
@@ -576,6 +580,60 @@ select:focus {
   transition: width 260ms ease;
 }
 
+.stage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stage-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  border: 1px solid #d9e1e7;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #60717d;
+  background: #ffffff;
+}
+
+.stage-card span {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #cfd8df;
+}
+
+.stage-card strong {
+  font-size: 13px;
+}
+
+.stage-card.is-current {
+  border-color: rgba(28, 93, 120, 0.55);
+  color: #172026;
+  background: #f2f8fa;
+}
+
+.stage-card.is-current span {
+  background: #1c5d78;
+}
+
+.stage-card.is-done {
+  border-color: rgba(47, 156, 104, 0.45);
+  color: #172026;
+}
+
+.stage-card.is-done span {
+  background: #2f9c68;
+}
+
+.log-toggle {
+  margin-bottom: 12px;
+}
+
 .log-view,
 .preview-panel pre {
   width: 100%;
@@ -650,6 +708,10 @@ select:focus {
 
 .spin {
   animation: spin 900ms linear infinite;
+}
+
+.license-compact .primary-panel {
+  min-height: 220px;
 }
 
 @keyframes spin {

@@ -7,31 +7,39 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 const BACKEND_NAME: &str = "whisper.cpp";
+const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
+
 #[derive(Clone, Default)]
 pub struct TranscriptionState {
     running: Arc<Mutex<bool>>,
+    cancel_requested: Arc<AtomicBool>,
+    active_child: Arc<Mutex<Option<Child>>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct EngineStatus {
     backend: String,
     engine_root: String,
-    python: String,
-    transcribe_path: String,
     whisper_cli: String,
     ffmpeg: String,
     model_path: String,
     default_model: String,
     default_output_dir: String,
     default_work_dir: String,
+    platform: String,
+    architecture: String,
     can_run: bool,
     message: String,
 }
@@ -43,22 +51,12 @@ pub struct TranscriptionRequest {
     output_dir: String,
     work_dir: Option<String>,
     model: String,
-    asr_backend: String,
     language: String,
     audio_filter: String,
-    batch_size: u32,
     threads: u32,
     device: String,
-    compute_type: String,
-    diarization: bool,
-    speaker_mode: String,
-    speakers: Option<u32>,
-    min_speakers: Option<u32>,
-    max_speakers: Option<u32>,
     trim_silence: bool,
     force: bool,
-    speaker_map: Option<String>,
-    hf_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -73,6 +71,26 @@ pub struct TranscriptionEvent {
 #[derive(Debug, Serialize)]
 pub struct StartResponse {
     started: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CancelResponse {
+    cancelled: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppDiagnostics {
+    name: String,
+    version: String,
+    backend: String,
+    platform: String,
+    architecture: String,
+    engine_root: String,
+    default_output_dir: String,
+    default_work_dir: String,
+    model_dir: String,
+    license_state_path: String,
+    update_endpoint: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +143,28 @@ pub fn engine_status(app: AppHandle) -> EngineStatus {
 pub fn model_status(app: AppHandle) -> model_assets::ModelInventory {
     let engine_root = find_engine_root(Some(&app));
     model_assets::model_status(&engine_root)
+}
+
+#[tauri::command]
+pub fn app_diagnostics(app: AppHandle) -> AppDiagnostics {
+    let status = build_engine_status(Some(&app));
+    AppDiagnostics {
+        name: "Microwest Whisper".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        backend: BACKEND_NAME.to_string(),
+        platform: env::consts::OS.to_string(),
+        architecture: env::consts::ARCH.to_string(),
+        engine_root: status.engine_root,
+        default_output_dir: status.default_output_dir,
+        default_work_dir: status.default_work_dir,
+        model_dir: model_assets::models_dir_path()
+            .to_string_lossy()
+            .to_string(),
+        license_state_path: license::license_state_path().to_string_lossy().to_string(),
+        update_endpoint:
+            "https://github.com/DwennK/Microwest-whisper/releases/latest/download/latest.json"
+                .to_string(),
+    }
 }
 
 #[tauri::command]
@@ -252,6 +292,7 @@ pub fn start_transcription(
         }
         *running = true;
     }
+    state.cancel_requested.store(false, Ordering::SeqCst);
 
     let status = build_engine_status(Some(&app));
     if !status.can_run {
@@ -266,17 +307,47 @@ pub fn start_transcription(
 
     let state_for_thread = state.inner().clone();
     thread::spawn(move || {
-        if let Err(error) = run_transcription(app.clone(), request, status) {
+        if let Err(error) =
+            run_transcription(app.clone(), state_for_thread.clone(), request, status)
+        {
             let _ = emit_event(&app, "failed", "system", &error, "Echec", 0);
         }
         let _ = set_running_direct(&state_for_thread, false);
+        state_for_thread
+            .cancel_requested
+            .store(false, Ordering::SeqCst);
     });
 
     Ok(StartResponse { started: true })
 }
 
+#[tauri::command]
+pub fn cancel_transcription(
+    app: AppHandle,
+    state: State<TranscriptionState>,
+) -> Result<CancelResponse, String> {
+    state.cancel_requested.store(true, Ordering::SeqCst);
+    let mut cancelled = false;
+    if let Ok(mut active_child) = state.active_child.lock() {
+        if let Some(child) = active_child.as_mut() {
+            let _ = child.kill();
+            cancelled = true;
+        }
+    }
+    emit_event(
+        &app,
+        "cancelled",
+        "system",
+        "Transcription annulée.",
+        "Annulé",
+        0,
+    )?;
+    Ok(CancelResponse { cancelled })
+}
+
 fn run_transcription(
     app: AppHandle,
+    state: TranscriptionState,
     request: TranscriptionRequest,
     status: EngineStatus,
 ) -> Result<(), String> {
@@ -305,54 +376,75 @@ fn run_transcription(
         work_dir,
     };
 
-    emit_event(
-        &app,
-        "started",
-        "system",
-        "Backend natif whisper.cpp initialisé.",
-        "Préparation",
-        5,
-    )?;
+    let result = (|| {
+        ensure_not_cancelled(&state)?;
+        emit_event(
+            &app,
+            "started",
+            "system",
+            "Backend natif whisper.cpp initialisé.",
+            "Préparation",
+            5,
+        )?;
 
-    let model_path =
-        model_assets::resolve_model_path(Path::new(&status.engine_root), &request.model);
-    if !model_path.exists {
-        return Err(format!(
-            "Modèle whisper.cpp introuvable: {}. Configure MICROWEST_WHISPER_MODEL ou place le modèle dans engine/whispercpp/models.",
-            model_path.path.to_string_lossy()
-        ));
+        let model_path =
+            model_assets::resolve_model_path(Path::new(&status.engine_root), &request.model);
+        if !model_path.exists {
+            return Err(format!(
+                "Modèle requis introuvable: {}. Téléchargez le modèle dans Réglages ou déposez un fichier GGML/GGUF dans le dossier modèles.",
+                model_path.path.to_string_lossy()
+            ));
+        }
+
+        prepare_wav(&app, &state, &paths, &request, Path::new(&status.ffmpeg))?;
+        ensure_not_cancelled(&state)?;
+        let transcript = run_whisper_cpp(
+            &app,
+            &state,
+            &paths,
+            &request,
+            Path::new(&status.whisper_cli),
+            &model_path.path,
+        )?;
+        ensure_not_cancelled(&state)?;
+        emit_event(
+            &app,
+            "log",
+            "system",
+            "Génération des exports...",
+            "Exports",
+            92,
+        )?;
+        let outputs = write_outputs(&paths, &transcript)?;
+        append_history(
+            &paths,
+            &request,
+            &outputs,
+            transcript.duration_seconds,
+            "success",
+        )?;
+        cleanup_temporary_wav(&app, &paths)?;
+
+        emit_event(
+            &app,
+            "completed",
+            "system",
+            "Process terminé.",
+            "Terminé",
+            100,
+        )?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = cleanup_temporary_wav(&app, &paths);
     }
-
-    prepare_wav(&app, &paths, &request, Path::new(&status.ffmpeg))?;
-    let transcript = run_whisper_cpp(
-        &app,
-        &paths,
-        &request,
-        Path::new(&status.whisper_cli),
-        &model_path.path,
-    )?;
-    let outputs = write_outputs(&paths, &transcript)?;
-    append_history(
-        &paths,
-        &request,
-        &outputs,
-        transcript.duration_seconds,
-        "success",
-    )?;
-
-    emit_event(
-        &app,
-        "completed",
-        "system",
-        "Process terminé.",
-        "Terminé",
-        100,
-    )?;
-    Ok(())
+    result
 }
 
 fn prepare_wav(
     app: &AppHandle,
+    state: &TranscriptionState,
     paths: &TranscriptionPaths,
     request: &TranscriptionRequest,
     ffmpeg: &Path,
@@ -423,7 +515,9 @@ fn prepare_wav(
     configure_child_binary_env(&mut command, ffmpeg);
     run_logged_command(
         app.clone(),
+        state,
         command,
+        CommandKind::Ffmpeg,
         "Impossible de convertir l'audio avec FFmpeg",
     )?;
 
@@ -438,6 +532,7 @@ fn prepare_wav(
 
 fn run_whisper_cpp(
     app: &AppHandle,
+    state: &TranscriptionState,
     paths: &TranscriptionPaths,
     request: &TranscriptionRequest,
     whisper_cli: &Path,
@@ -495,7 +590,13 @@ fn run_whisper_cpp(
     let mut command = Command::new(whisper_cli);
     command.args(&args).current_dir(&paths.work_dir);
     configure_child_binary_env(&mut command, whisper_cli);
-    run_logged_command(app.clone(), command, "whisper-cli a échoué")?;
+    run_logged_command(
+        app.clone(),
+        state,
+        command,
+        CommandKind::Whisper,
+        "whisper-cli a échoué",
+    )?;
 
     let mut transcript = if raw_json_path.exists() {
         parse_whisper_json(&raw_json_path)?
@@ -588,20 +689,70 @@ fn append_history(
 
 fn run_logged_command(
     app: AppHandle,
+    state: &TranscriptionState,
     mut command: Command,
+    kind: CommandKind,
     failure_context: &str,
 ) -> Result<(), String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command
         .spawn()
-        .map_err(|error| format!("{failure_context}: {error}"))?;
+        .map_err(|error| command_spawn_error(kind, failure_context, &error.to_string()))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
     let stdout_handle = stdout.map(|stream| spawn_reader(app.clone(), "stdout", stream));
     let stderr_handle = stderr.map(|stream| spawn_reader(app.clone(), "stderr", stream));
 
-    let status = child.wait().map_err(|error| error.to_string())?;
+    {
+        let mut active_child = state
+            .active_child
+            .lock()
+            .map_err(|_| "Etat process indisponible.".to_string())?;
+        *active_child = Some(child);
+    }
+
+    let timeout = command_timeout();
+    let started_at = Instant::now();
+    let status = loop {
+        ensure_not_cancelled(state)?;
+        {
+            let mut active_child = state
+                .active_child
+                .lock()
+                .map_err(|_| "Etat process indisponible.".to_string())?;
+            let Some(child) = active_child.as_mut() else {
+                return Err("Process externe interrompu.".to_string());
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    *active_child = None;
+                    break status;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = child.kill();
+                    *active_child = None;
+                    return Err(format!("{failure_context}: {error}"));
+                }
+            }
+        }
+
+        if started_at.elapsed() > timeout {
+            if let Ok(mut active_child) = state.active_child.lock() {
+                if let Some(child) = active_child.as_mut() {
+                    let _ = child.kill();
+                }
+                *active_child = None;
+            }
+            return Err(format!(
+                "{failure_context}: délai dépassé après {}.",
+                format_duration_human(timeout)
+            ));
+        }
+        thread::sleep(Duration::from_millis(200));
+    };
+
     if let Some(handle) = stdout_handle {
         let _ = handle.join();
     }
@@ -612,12 +763,69 @@ fn run_logged_command(
     if status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "{failure_context}. Code {}.",
-            status
-                .code()
-                .map_or_else(|| "inconnu".to_string(), |code| code.to_string())
-        ))
+        Err(command_exit_error(kind, failure_context, status.code()))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CommandKind {
+    Ffmpeg,
+    Whisper,
+}
+
+fn ensure_not_cancelled(state: &TranscriptionState) -> Result<(), String> {
+    if state.cancel_requested.load(Ordering::SeqCst) {
+        Err("Transcription annulée.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn command_timeout() -> Duration {
+    env::var("MICROWEST_TRANSCRIPTION_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_COMMAND_TIMEOUT_SECONDS))
+}
+
+fn command_spawn_error(kind: CommandKind, context: &str, error: &str) -> String {
+    match kind {
+        CommandKind::Ffmpeg => format!(
+            "{context}: FFmpeg est introuvable ou impossible à lancer. Vérifiez que le binaire FFmpeg est présent dans le bundle pour cette plateforme. Détail: {error}"
+        ),
+        CommandKind::Whisper => format!(
+            "{context}: whisper-cli est introuvable, non exécutable ou incompatible avec cette machine. Vérifiez le bundle {}/{} et l'architecture du binaire. Détail: {error}",
+            env::consts::OS,
+            env::consts::ARCH
+        ),
+    }
+}
+
+fn command_exit_error(kind: CommandKind, context: &str, code: Option<i32>) -> String {
+    let code = code.map_or_else(|| "inconnu".to_string(), |code| code.to_string());
+    match kind {
+        CommandKind::Ffmpeg => format!(
+            "{context}. FFmpeg a refusé le fichier audio ou le binaire est incompatible. Code {code}."
+        ),
+        CommandKind::Whisper => format!(
+            "{context}. whisper-cli a échoué avec le modèle ou le WAV généré. Si le message parle de format modèle ou de CPU, utilisez un modèle GGML/GGUF compatible avec ce build. Code {code}."
+        ),
+    }
+}
+
+fn format_duration_human(duration: Duration) -> String {
+    let total = duration.as_secs();
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}min")
+    } else if minutes > 0 {
+        format!("{minutes}min {seconds}s")
+    } else {
+        format!("{seconds}s")
     }
 }
 
@@ -688,10 +896,10 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
 
     let mut missing = Vec::new();
     if !whisper_cli.exists {
-        missing.push("whisper-cli");
+        missing.push(format!("whisper-cli ({})", platform_tag()));
     }
     if !ffmpeg.exists {
-        missing.push("FFmpeg");
+        missing.push(format!("FFmpeg ({})", platform_tag()));
     }
     let can_run = missing.is_empty();
     let message = if can_run && model_path.exists {
@@ -700,7 +908,7 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
         "Backend natif prêt. Téléchargez un modèle dans Réglages.".to_string()
     } else {
         format!(
-            "Composants audio manquants dans ce build: {}.",
+            "Composants audio manquants ou incompatibles dans ce build: {}.",
             missing.join(", ")
         )
     };
@@ -708,14 +916,14 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
     EngineStatus {
         backend: BACKEND_NAME.to_string(),
         engine_root: engine_root.to_string_lossy().to_string(),
-        python: String::new(),
-        transcribe_path: String::new(),
         whisper_cli: whisper_cli.path.to_string_lossy().to_string(),
         ffmpeg: ffmpeg.path.to_string_lossy().to_string(),
         model_path: model_path.path.to_string_lossy().to_string(),
         default_model: model_assets::DEFAULT_MODEL.to_string(),
         default_output_dir: default_output_dir.to_string_lossy().to_string(),
         default_work_dir: default_work_dir.to_string_lossy().to_string(),
+        platform: env::consts::OS.to_string(),
+        architecture: env::consts::ARCH.to_string(),
         can_run,
         message,
     }
@@ -958,6 +1166,36 @@ fn build_audio_filter(request: &TranscriptionRequest) -> Option<String> {
         _ => {}
     }
     (!filters.is_empty()).then(|| filters.join(","))
+}
+
+fn cleanup_temporary_wav(app: &AppHandle, paths: &TranscriptionPaths) -> Result<(), String> {
+    if env::var("MICROWEST_KEEP_TEMP_WAV").ok().as_deref() == Some("1") {
+        return Ok(());
+    }
+    let metadata_path = paths.wav.with_extension("wav.meta.json");
+    let mut removed = Vec::new();
+    for path in [&paths.wav, &metadata_path] {
+        if path.exists() {
+            fs::remove_file(path).map_err(|error| {
+                format!(
+                    "Impossible de nettoyer le fichier temporaire {}: {error}",
+                    path.to_string_lossy()
+                )
+            })?;
+            removed.push(path.to_string_lossy().to_string());
+        }
+    }
+    if !removed.is_empty() {
+        emit_event(
+            app,
+            "log",
+            "system",
+            "Fichiers temporaires nettoyés.",
+            "Nettoyage",
+            99,
+        )?;
+    }
+    Ok(())
 }
 
 fn normalize_language(language: &str) -> String {
@@ -1424,5 +1662,88 @@ mod tests {
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].text, "Bonjour");
         assert_eq!(segments[1].start, 1.25);
+    }
+
+    #[test]
+    fn writes_expected_exports_without_diarization() {
+        let root = env::temp_dir().join(format!("microwest-export-test-{}", uuid::Uuid::new_v4()));
+        let output_dir = root.join("out");
+        let work_dir = root.join("work");
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::create_dir_all(&work_dir).unwrap();
+        let audio = root.join("meeting.wav");
+        fs::write(&audio, b"audio").unwrap();
+        let paths = TranscriptionPaths {
+            audio: audio.clone(),
+            output_dir: output_dir.clone(),
+            work_dir,
+            wav: root.join("meeting.prepared.wav"),
+        };
+        let transcript = NativeTranscript {
+            backend: BACKEND_NAME.to_string(),
+            model: "large-v3-turbo-q8_0".to_string(),
+            model_path: "/models/ggml-large-v3-turbo-q8_0.bin".to_string(),
+            language: "fr".to_string(),
+            source_audio: audio.to_string_lossy().to_string(),
+            preprocessed_wav: paths.wav.to_string_lossy().to_string(),
+            duration_seconds: Some(2.0),
+            text: "Bonjour\n\nSuite".to_string(),
+            segments: vec![
+                TranscriptSegment {
+                    start: 0.0,
+                    end: 1.25,
+                    text: "Bonjour".to_string(),
+                },
+                TranscriptSegment {
+                    start: 1.25,
+                    end: 2.0,
+                    text: "Suite".to_string(),
+                },
+            ],
+        };
+
+        let outputs = write_outputs(&paths, &transcript).unwrap();
+
+        assert_eq!(outputs.len(), 7);
+        assert!(outputs
+            .iter()
+            .any(|path| path.to_string_lossy().ends_with(".transcript.md")));
+        assert!(outputs
+            .iter()
+            .any(|path| path.to_string_lossy().ends_with(".clean.txt")));
+        assert!(outputs
+            .iter()
+            .any(|path| path.to_string_lossy().ends_with(".segments.srt")));
+        assert!(outputs
+            .iter()
+            .any(|path| path.to_string_lossy().ends_with(".transcript.docx")));
+        let markdown_path = outputs
+            .iter()
+            .find(|path| path.to_string_lossy().ends_with(".transcript.md"))
+            .unwrap();
+        let markdown = fs::read_to_string(markdown_path).unwrap();
+        assert!(markdown.contains("Backend: `whisper.cpp`"));
+        assert!(!markdown.contains("SPEAKER_"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn maps_whisper_failure_to_actionable_error() {
+        let message = command_exit_error(CommandKind::Whisper, "whisper-cli a échoué", Some(1));
+
+        assert!(message.contains("whisper-cli"));
+        assert!(message.contains("GGML/GGUF"));
+        assert!(message.contains("Code 1"));
+    }
+
+    #[test]
+    fn maps_ffmpeg_spawn_failure_to_actionable_error() {
+        let message =
+            command_spawn_error(CommandKind::Ffmpeg, "Conversion impossible", "not found");
+
+        assert!(message.contains("FFmpeg"));
+        assert!(message.contains("présent dans le bundle"));
+        assert!(message.contains("not found"));
     }
 }
