@@ -1,130 +1,239 @@
 # Microwest Whisper
 
-Application desktop Tauri pour transcrire localement des fichiers audio avec un backend natif `whisper.cpp` et exports DOCX, Markdown, TXT, SRT et JSON.
+Microwest Whisper est une application desktop Tauri/React qui transcrit des fichiers audio localement avec un backend natif `whisper.cpp`.
 
-La version principale est l'app Tauri/React. L'ancien moteur Python reste isole dans `engine/python` pour reference de migration, mais l'app Tauri appelle maintenant `whisper-cli` directement depuis Rust.
+L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à installer Python, FFmpeg, Node, Whisper ou un token Hugging Face.
+
+## Etat actuel
+
+- Application desktop Tauri v2 + React/Vite.
+- Backend natif Rust qui lance `whisper-cli`.
+- Conversion audio via FFmpeg vers WAV PCM 16 kHz mono.
+- Modèles Whisper GGML téléchargés à la demande, hors Git.
+- Pas de diarisation, pas de pyannote, pas de labels `SPEAKER_00`.
+- Licence IA Swiss conservée.
+- Auto-update manuel via GitHub Releases.
+- Builds CI macOS, Windows et Linux.
+
+L'ancien moteur Python/WhisperX reste dans `engine/python` comme référence de migration, mais l'application principale ne l'utilise plus.
+
+## Fonctionnalités
+
+- Sélection d'un fichier audio et d'un dossier de sortie.
+- Validation et activation de licence IA Swiss.
+- Choix du modèle `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0`.
+- Téléchargement et suppression des modèles depuis l'app.
+- Transcription locale avec segments horodatés.
+- Exports générés:
+  - Markdown;
+  - TXT propre;
+  - SRT;
+  - DOCX;
+  - segments JSON;
+  - JSON brut `whisper.cpp`;
+  - historique JSONL.
 
 ## Structure
 
 ```text
-src/                 Interface React/Vite
-src-tauri/           Application Tauri et bridge Rust
-engine/whispercpp/   Racine packaging du backend natif whisper.cpp
-engine/python/       Ancien moteur Python isole
-docs/V2_PLAN.md      Audit V1 et plan d'architecture
-tests/               Tests rapides du moteur Python
+src/                         Interface React/Vite
+src-tauri/                   Application Tauri et backend Rust
+src-tauri/src/license.rs     Licence IA Swiss
+src-tauri/src/transcription.rs
+                             Backend transcription whisper.cpp
+engine/whispercpp/           Racine des binaires natifs et modèles locaux
+engine/python/               Ancien moteur Python, gardé pour référence
+scripts/                     Préparation ressources et manifests release
+docs/                        Notes backend, updater et historique migration
+tests/                       Tests Python historiques sur les helpers d'export
 ```
 
-## Developpement
+## Prérequis développement
 
-Prerequis:
+Pour développer l'app, il faut installer localement:
 
-- Node.js et npm;
-- Rust et Cargo;
-- en mode dev: `whisper-cli` et FFmpeg.
+- Node.js + npm;
+- Rust + Cargo;
+- Python 3 pour les tests historiques et le script de récupération des binaires.
 
-Installer le frontend:
+L'utilisateur final n'a pas besoin de ces outils.
+
+## Installation dev
 
 ```bash
 npm install
 ```
 
-Configurer le backend natif en mode dev:
+Récupérer les binaires natifs pour la plateforme courante:
 
 ```bash
-export MICROWEST_WHISPER_CLI=/absolute/path/to/whisper-cli
-export MICROWEST_FFMPEG=/absolute/path/to/ffmpeg
+python3 scripts/fetch-whispercpp-binaries.py
 ```
 
-L'app peut télécharger les modèles `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0` au premier usage. Pour forcer un modèle local en développement, utilise `MICROWEST_WHISPER_MODEL`.
-
-Lancer l'app:
+Lancer l'app en développement:
 
 ```bash
 npm run dev
 ```
 
+## Backend whisper.cpp
+
+En développement, l'app résout `whisper-cli`, FFmpeg et les modèles dans cet ordre:
+
+1. Variables d'environnement explicites.
+2. Ressources `engine/whispercpp`.
+3. Dossier data utilisateur.
+4. `PATH`, seulement en mode dev.
+
 Variables utiles:
 
-- `MICROWEST_WHISPER_CPP_ROOT`: dossier racine du backend natif, par defaut `engine/whispercpp`.
-- `MICROWEST_WHISPER_CLI`: executable `whisper-cli` a utiliser en developpement.
-- `MICROWEST_FFMPEG`: executable FFmpeg a utiliser en developpement.
-- `MICROWEST_WHISPER_MODEL`: modele GGML/GGUF local a utiliser en developpement.
-- `MICROWEST_MODEL_DIR`: dossier alternatif pour les modèles téléchargés en developpement.
-- `MICROWEST_LICENSE_API_BASE`: API licence alternative, par defaut `https://iaswiss.com/api/licenses`.
-- `MICROWEST_LICENSE_STATE`: chemin de test pour le fichier `license.json`.
+```bash
+export MICROWEST_WHISPER_CLI=/absolute/path/to/whisper-cli
+export MICROWEST_FFMPEG=/absolute/path/to/ffmpeg
+export MICROWEST_WHISPER_MODEL=/absolute/path/to/model.bin
+export MICROWEST_MODEL_DIR=/absolute/path/to/models
+```
+
+Plateformes de binaires attendues:
+
+```text
+engine/whispercpp/bin/macos-aarch64/
+engine/whispercpp/bin/macos-x86_64/
+engine/whispercpp/bin/windows-x86_64/
+engine/whispercpp/bin/linux-x86_64/
+```
+
+Sur Windows, `whisper-cli.exe` doit être accompagné des DLLs `whisper.cpp`/GGML nécessaires.
+
+## Modèles
+
+Les modèles ne sont pas commités dans Git.
+
+Modèles supportés:
+
+- `large-v3-turbo-q8_0`: environ 834 MiB.
+- `large-v3-turbo-q5_0`: environ 547 MiB.
+
+L'app télécharge le modèle choisi au premier usage et vérifie taille + SHA-256 avant installation.
+
+Emplacements par défaut:
+
+```text
+macOS    ~/Library/Application Support/Microwest Whisper/models/
+Windows  %LOCALAPPDATA%\Microwest Whisper\models\
+Linux    ~/.local/share/microwest-whisper/models/
+```
+
+Nettoyage:
+
+- Depuis l'app: bouton `Supprimer modèles`.
+- Windows NSIS: le désinstalleur supprime le dossier modèles.
+- macOS drag-and-drop: il n'y a pas de hook système à la suppression de l'app; supprimer les modèles depuis l'app avant de jeter l'app.
 
 ## Build desktop
+
+Build local pour la plateforme courante:
 
 ```bash
 npm run build
 ```
 
-Le build Tauri prepare d'abord les ressources `whisper.cpp` pour la plateforme courante, lance `tsc && vite build`, compile l'application Rust, puis produit les bundles.
+Le build exécute:
 
-Les binaires natifs restent hors Git. Avant un build release, place les fichiers dans `engine/whispercpp/bin/<platform>/`, puis `npm run build` copie uniquement la plateforme courante vers `src-tauri/resources/engine/whispercpp`.
+1. `npm run prepare:whispercpp`;
+2. `npm run build:frontend`;
+3. `tauri build`;
+4. génération des bundles desktop.
 
-Pour preparer explicitement une autre plateforme:
+Préparer explicitement une autre plateforme:
 
 ```bash
 MICROWEST_BUNDLE_PLATFORM=windows-x86_64 npm run prepare:whispercpp
 ```
 
-## Auto-update
+## Releases et auto-update
 
-L'app inclut un bouton de verification manuelle des mises a jour via GitHub Releases. Les builds de tags `v*` generent les signatures Tauri et le manifeste `latest.json`; les builds classiques sur `main` ne signent pas d'artefacts updater.
+Les mises à jour passent par GitHub Releases.
 
-Voir [docs/UPDATER.md](docs/UPDATER.md) pour les secrets GitHub et le flux de publication.
+Endpoint utilisé par l'app:
 
-## Licence
+```text
+https://github.com/DwennK/Microwest-whisper/releases/latest/download/latest.json
+```
 
-L'app appelle uniquement l'API licence IA Swiss:
+Publier une release:
 
-- activation: `POST https://iaswiss.com/api/licenses/activate`;
-- validation: `POST https://iaswiss.com/api/licenses/validate`.
+1. Bumper la version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json`.
+2. Committer.
+3. Créer un tag `vX.Y.Z`.
+4. Pousser `main` puis le tag.
+5. GitHub Actions construit macOS, Windows et Linux.
+6. Le workflow génère les signatures updater et `latest.json`.
+7. La release GitHub publie les installateurs et le manifeste updater.
 
-Payload envoye:
+Commande release locale:
+
+```bash
+npm run build:release
+```
+
+Secrets GitHub nécessaires:
+
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` si la clé est protégée par mot de passe.
+
+Voir [docs/UPDATER.md](docs/UPDATER.md).
+
+## Licence IA Swiss
+
+L'app appelle l'API licence IA Swiss:
+
+```text
+POST https://iaswiss.com/api/licenses/activate
+POST https://iaswiss.com/api/licenses/validate
+```
+
+Payload:
 
 ```json
 {
   "licenseKey": "MW-XXXXX-XXXXX-XXXXX-XXXXX",
   "machineId": "machine-id-local",
-  "appVersion": "0.2.0"
+  "appVersion": "0.2.1"
 }
 ```
 
-Aucune cle Stripe n'est embarquee dans l'application. Le backend IA Swiss verifie l'abonnement actif.
+Aucune clé Stripe n'est embarquée dans l'application. Le backend IA Swiss vérifie l'abonnement.
 
-## Fonctionnalites actuelles
+Variables dev utiles:
 
-- validation de licence au lancement;
-- activation et validation via l'API IA Swiss existante;
-- selection audio et dossier output via les dialogues Tauri;
-- parametrage modele, langue, threads, device CPU et filtres audio;
-- téléchargement à la demande du modèle local `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0`;
-- suppression des modèles téléchargés depuis l'app;
-- lancement de `whisper-cli` en process separe depuis le backend Rust;
-- progression derivee des logs existants;
-- conversion audio vers WAV 16 kHz mono via FFmpeg;
-- exports attendus: DOCX, Markdown, SRT, TXT, segments JSON, historique JSONL;
-- apercu texte et historique JSONL.
+```bash
+export MICROWEST_LICENSE_API_BASE=https://iaswiss.com/api/licenses
+export MICROWEST_LICENSE_STATE=/tmp/microwest-license.json
+```
 
 ## Tests
 
-Les tests rapides ne chargent pas les modeles Whisper:
-
 ```bash
-python3 -m unittest discover
-cargo check --manifest-path src-tauri/Cargo.toml
 npm run build:frontend
+cargo check --manifest-path src-tauri/Cargo.toml
+python3 -m unittest discover -v
 ```
 
-## Packaging final restant
+Les tests Python actuels couvrent surtout les helpers historiques d'exports et de chemins. Ils ne chargent pas de modèle Whisper.
 
-En developpement, l'app peut utiliser les variables `MICROWEST_WHISPER_CLI`, `MICROWEST_FFMPEG` et `MICROWEST_WHISPER_MODEL`. Pour un produit vendable sans installation manuelle:
+## Documentation
 
-- macOS: bundle `whisper-cli` et FFmpeg, executables signes, notarisation Apple;
-- Windows: bundle `whisper-cli.exe`, ses DLLs `whisper.cpp`/GGML et `ffmpeg.exe`, code signing, attention antivirus;
-- Linux: AppImage/deb/rpm avec `whisper-cli` et FFmpeg, compatibilite glibc documentee;
-- garder les modèles hors Git et les télécharger dans le dossier data utilisateur;
-- ajouter les binaires par plateforme dans `engine/whispercpp/bin/<plateforme>/` avant les builds release.
+- [docs/WHISPER_CPP_BACKEND.md](docs/WHISPER_CPP_BACKEND.md): détails du backend natif.
+- [docs/UPDATER.md](docs/UPDATER.md): signature et publication auto-update.
+- [docs/V2_PLAN.md](docs/V2_PLAN.md): audit historique de la migration Python vers Tauri.
+
+## Notes packaging
+
+Avant une distribution commerciale complète:
+
+- signer et notariser macOS;
+- signer Windows pour réduire les alertes SmartScreen/antivirus;
+- valider les bundles Linux AppImage/deb/rpm sur distributions cibles;
+- vérifier la licence de redistribution FFmpeg selon les binaires utilisés;
+- supprimer `engine/python` quand la migration native est définitivement validée.
