@@ -420,6 +420,7 @@ fn prepare_wav(
     )?;
     let mut command = Command::new(ffmpeg);
     command.args(&args);
+    configure_child_binary_env(&mut command, ffmpeg);
     run_logged_command(
         app.clone(),
         command,
@@ -493,6 +494,7 @@ fn run_whisper_cpp(
     )?;
     let mut command = Command::new(whisper_cli);
     command.args(&args).current_dir(&paths.work_dir);
+    configure_child_binary_env(&mut command, whisper_cli);
     run_logged_command(app.clone(), command, "whisper-cli a échoué")?;
 
     let mut transcript = if raw_json_path.exists() {
@@ -865,6 +867,27 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     env::split_paths(&path_env)
         .map(|path| path.join(&executable))
         .find(|path| path.exists())
+}
+
+fn configure_child_binary_env(command: &mut Command, executable: &Path) {
+    let Some(binary_dir) = executable.parent() else {
+        return;
+    };
+    let variable = if cfg!(target_os = "windows") {
+        "PATH"
+    } else if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+
+    let mut paths = vec![binary_dir.to_path_buf()];
+    if let Some(existing) = env::var_os(variable) {
+        paths.extend(env::split_paths(&existing));
+    }
+    if let Ok(joined) = env::join_paths(paths) {
+        command.env(variable, joined);
+    }
 }
 
 fn audio_preprocess_signature(request: &TranscriptionRequest) -> Value {
