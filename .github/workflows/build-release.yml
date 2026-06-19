@@ -130,6 +130,21 @@ jobs:
       - name: Fetch native whisper.cpp binaries
         run: python scripts/fetch-whispercpp-binaries.py
 
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_BASE64) {
+            Write-Host "Windows signing certificate not configured; build will be unsigned."
+            exit 0
+          }
+          [IO.File]::WriteAllBytes("windows-certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          Import-PfxCertificate -FilePath windows-certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+
       - name: Build Tauri app
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: npm run build
@@ -139,6 +154,19 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_PROVIDER_SHORT_NAME: ${{ secrets.APPLE_PROVIDER_SHORT_NAME }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_DIGEST_ALGORITHM: ${{ vars.WINDOWS_DIGEST_ALGORITHM }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
         run: npm run build:release
 
       - name: Upload build artifact
@@ -198,6 +226,10 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
+          checksum_notes="$(
+            awk '{ printf "- `%s`  `%s`\n", $1, $2 }' release-artifacts/SHA256SUMS.txt
+          )"
+          release_notes="$(printf '## SHA-256 checksums\n\n%s\n\nThe full checksum file is also attached as `SHA256SUMS.txt`.' "$checksum_notes")"
           mapfile -d '' release_files < <(
             find release-artifacts -type f \( \
               -name '*.dmg' -o \
@@ -216,4 +248,7 @@ jobs:
             echo "No release files found"
             exit 1
           fi
-          gh release create "$TAG_NAME" "${release_files[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes
+          gh release create "$TAG_NAME" "${release_files[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --generate-notes \
+            --notes "$release_notes"

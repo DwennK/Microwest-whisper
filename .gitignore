@@ -13,6 +13,7 @@ dist/
 src-tauri/resources/
 src-tauri/gen/
 src-tauri/target/
+src-tauri/tauri.windows-signing.local.json
 output-v2/
 work-v2/
 engine/whispercpp/bin/*/*

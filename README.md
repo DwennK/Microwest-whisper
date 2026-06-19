@@ -13,6 +13,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Pas de diarisation, pas de pyannote, pas de labels locuteur.
 - Licence IA Swiss conservée.
 - Auto-update manuel via GitHub Releases.
+- Checksums SHA-256 publiés comme asset et dans les notes GitHub Releases.
 - Builds CI macOS, Windows et Linux.
 
 ## Fonctionnalités
@@ -22,6 +23,8 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Choix du modèle `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0`.
 - Téléchargement et suppression des modèles depuis l'app.
 - Transcription locale avec segments horodatés.
+- Recherche dans la transcription, édition légère des segments et copie du texte.
+- Aperçu SRT et export dédié des segments sélectionnés.
 - Exports générés:
   - Markdown;
   - TXT propre;
@@ -178,6 +181,14 @@ Secrets GitHub nécessaires:
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` si la clé est protégée par mot de passe.
 
+Secrets optionnels pour distribution commerciale signée:
+
+- macOS/notarisation: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, puis `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID` ou `APPLE_API_KEY` + `APPLE_API_ISSUER`.
+- Windows: `WINDOWS_CERTIFICATE_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_CERTIFICATE_THUMBPRINT`.
+- Variables Windows optionnelles: `WINDOWS_DIGEST_ALGORITHM`, `WINDOWS_TIMESTAMP_URL`.
+
+Sans ces secrets, les builds restent publiables pour test mais les installateurs OS ne sont pas signés/notarisés.
+
 Voir [docs/UPDATER.md](docs/UPDATER.md).
 
 ## Licence IA Swiss
@@ -225,9 +236,9 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 Avant une distribution commerciale complète:
 
-- signer et notariser macOS;
-- signer Windows pour réduire les alertes SmartScreen/antivirus;
+- configurer les secrets Apple Developer pour signer et notariser macOS;
+- configurer un certificat de signature Windows pour réduire les alertes SmartScreen/antivirus;
 - valider les bundles Linux AppImage/deb/rpm sur distributions cibles;
 - vérifier la licence de redistribution FFmpeg selon les binaires utilisés.
 
-L'app expose aussi un écran `À propos` avec version, backend, plateforme, licence, endpoint updater et chemins locaux.
+L'app expose aussi un écran `À propos` avec version, backend, modèle, plateforme, licence, endpoint updater et chemins locaux.
