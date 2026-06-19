@@ -27,7 +27,7 @@ Si cette cle est perdue, les installations deja distribuees ne pourront plus acc
 
 1. Mettre a jour la version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json`.
 2. Committer le changement de version.
-3. Creer et pousser un tag SemVer, par exemple `v0.2.2`.
+3. Creer et pousser un tag SemVer, par exemple `v0.2.3`.
 4. Le workflow GitHub construit macOS, Windows et Linux.
 5. Sur le tag, `npm run build:release` genere les signatures updater.
 6. `scripts/generate-updater-manifest.mjs` cree `latest.json`.

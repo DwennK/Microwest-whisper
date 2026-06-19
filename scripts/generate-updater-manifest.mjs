@@ -55,7 +55,7 @@ const manifest = {
         target,
         {
           signature: readFileSync(artifact.signaturePath, "utf8").trim(),
-          url: `${releaseBaseUrl}/${encodeURIComponent(basename(artifact.artifactPath))}`,
+          url: `${releaseBaseUrl}/${encodeURIComponent(githubAssetName(basename(artifact.artifactPath)))}`,
         },
       ]),
   ),
@@ -114,4 +114,8 @@ function artifactPriority(artifactPath) {
     return 80;
   }
   return 50;
+}
+
+function githubAssetName(name) {
+  return name.replaceAll(" ", ".");
 }
