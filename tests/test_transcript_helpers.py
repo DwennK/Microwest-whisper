@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import unittest
+import sys
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+
+ENGINE_ROOT = Path(__file__).resolve().parents[1] / "engine" / "python"
+sys.path.insert(0, str(ENGINE_ROOT))
 
 from transcript_paths import expected_output_paths, source_id, transcript_stem, work_wav_path
 from transcribe import (

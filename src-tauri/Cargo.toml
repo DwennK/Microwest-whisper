@@ -1,0 +1,22 @@
+[package]
+name = "microwest-whisper"
+version = "0.2.0"
+description = "Microwest Whisper desktop app"
+authors = ["IA Swiss"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dirs-next = "2"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+uuid = { version = "1", features = ["v4", "serde"] }

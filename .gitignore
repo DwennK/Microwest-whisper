@@ -7,3 +7,9 @@ __pycache__/
 .env
 *.log
 .DS_Store
+node_modules/
+dist/
+src-tauri/gen/
+src-tauri/target/
+output-v2/
+work-v2/

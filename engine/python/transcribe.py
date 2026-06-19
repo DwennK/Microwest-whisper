@@ -412,7 +412,7 @@ def can_import_mlx_whisper() -> bool:
 def resolve_asr_backend(requested: str) -> str:
     if requested == "mlx":
         if not can_import_mlx_whisper():
-            fail("MLX backend requested but mlx-whisper is not installed. On Mac, run ./setup-mac.sh.")
+            fail("MLX backend requested but mlx-whisper is not installed. Install engine/python/requirements-mac.txt.")
         return "mlx"
     if requested == "whisperx":
         return "whisperx"
@@ -890,7 +890,6 @@ def run_doctor() -> None:
     ffmpeg = find_ffmpeg()
     print(f"- FFmpeg: {ffmpeg or 'missing'}")
     print(f"- whisperx: {import_status('whisperx')}")
-    print(f"- PySide6: {import_status('PySide6')}")
     print(f"- python-dotenv: {import_status('dotenv')}")
     print(f"- python-docx: {import_status('docx')}")
     print(f"- mlx-whisper: {import_status('mlx_whisper')}")

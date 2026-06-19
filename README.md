@@ -1,229 +1,109 @@
 # Microwest Whisper
 
-Application locale pour transcrire des fichiers audio longs en francais, avec exports propres et separation optionnelle des personnes.
+Application desktop Tauri pour transcrire localement des fichiers audio avec Whisper, diarisation optionnelle et exports DOCX, Markdown et SRT.
 
-Le projet fournit:
+La version principale est maintenant l'app Tauri. L'ancienne interface Qt/PySide a ete retiree. Le moteur Python reste isole dans `engine/python` et est appele comme process par Tauri, afin de garder une migration progressive vers `whisper.cpp` ou `faster-whisper` possible plus tard.
 
-- une interface graphique PySide6;
-- un pipeline WhisperX/MLX pour la transcription;
-- une diarisation pyannote quand la separation des personnes est activee;
-- des exports TXT, Markdown, SRT, JSON et DOCX;
-- un historique et des checkpoints pour eviter de tout recalculer inutilement.
+## Structure
 
-## Demarrage rapide
+```text
+src/                 Interface React/Vite
+src-tauri/           Application Tauri et bridge Rust
+engine/python/       Moteur transcription Python
+docs/V2_PLAN.md      Audit V1 et plan d'architecture
+tests/               Tests rapides du moteur Python
+```
 
-### macOS
+## Developpement
+
+Prerequis:
+
+- Node.js et npm;
+- Rust et Cargo;
+- Python 3.11;
+- FFmpeg disponible via `imageio-ffmpeg` ou dans le PATH.
+
+Installer le frontend et le moteur Python:
 
 ```bash
-./setup-mac.sh
-./launch-gui.sh
+npm install
+python3.11 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r engine/python/requirements.txt
 ```
 
-Sur Mac Apple Silicon, le setup installe aussi `mlx-whisper`. Le backend `auto` utilise alors MLX pour la transcription brute, puis WhisperX pour l'alignement.
-
-### Windows
-
-Ouvre PowerShell dans ce dossier:
-
-```powershell
-.\setup.ps1
-.\launch-gui.ps1
-```
-
-Le setup cree `.venv`, installe les dependances Python et verifie FFmpeg.
-
-## Licence
-
-Le logiciel peut etre telecharge publiquement depuis GitHub Releases:
-
-https://github.com/DwennK/Microwest-whisper/releases/latest
-
-L'utilisation du logiciel demande une cle de licence achetee sur IA Swiss. Apres paiement, la cle arrive par email.
-
-Dans l'interface:
-
-1. Ouvre l'onglet `Parametres`.
-2. Colle la cle dans `Licence Microwest Whisper`.
-3. Clique sur `Activer la licence`.
-
-En ligne de commande:
+Sur Mac Apple Silicon, ajoute le backend MLX:
 
 ```bash
-python transcribe.py --activate-license "MW-XXXXX-XXXXX-XXXXX-XXXXX"
-python transcribe.py --license-status
+python -m pip install -r engine/python/requirements-mac.txt
 ```
 
-Par defaut, la licence est reverifiee regulierement avec l'API IA Swiss. Une verification valide autorise une courte utilisation hors ligne.
-
-## Utiliser l'interface
-
-1. Onglet `Audio`: choisis un fichier `.m4a`, `.mp3`, `.wav`, `.mp4`, etc.
-2. Onglet `Reglages`: choisis le profil et les options.
-3. Onglet `Execution`: lance la transcription et suis le journal.
-4. Onglet `Resultats`: consulte les exports, renomme les locuteurs ou relance un fichier.
-
-La separation des personnes est desactivee par defaut. C'est volontaire: une transcription simple est plus rapide, ne demande pas de token Hugging Face et echoue moins souvent au premier essai.
-
-Active `Separer les personnes` seulement si tu veux une diarisation. Dans ce cas, renseigne le token Hugging Face dans l'onglet `Parametres`.
-
-Avant une longue transcription, utilise `Verifier la configuration`. L'app controle `.venv`, FFmpeg, les dependances Python, le backend recommande et le token pyannote si la separation des personnes est activee.
-
-## Token Hugging Face
-
-Le token est necessaire uniquement pour separer les personnes.
-
-1. Cree un compte Hugging Face.
-2. Cree un token: https://huggingface.co/settings/tokens
-3. Accepte les conditions de ces modeles:
-   - https://huggingface.co/pyannote/speaker-diarization-community-1
-   - https://huggingface.co/pyannote/speaker-diarization
-   - https://huggingface.co/pyannote/segmentation
-
-Dans l'app, colle le token dans `Parametres`. Si tu coches l'enregistrement, il est stocke dans `.env`.
-
-En ligne de commande, tu peux aussi definir:
+Lancer l'app:
 
 ```bash
-export HUGGINGFACE_TOKEN="hf_xxxxxxxxxxxxxxxxx"
+npm run dev
 ```
 
-PowerShell:
+Variables utiles:
 
-```powershell
-$env:HUGGINGFACE_TOKEN = "hf_xxxxxxxxxxxxxxxxx"
-```
-
-## Profils recommandes
-
-- `Qualite max (large-v3)`: meilleur choix si la qualite prime.
-- `Rapide (large-v3-turbo)`: plus rapide, avec une petite concession possible sur la qualite.
-- `CPU leger (medium + int8)`: utile sur une machine sans GPU ou avec peu de memoire.
-- `Sans locuteurs`: transcription texte uniquement, sans diarisation.
-
-Sur Apple Silicon, garde `Backend: auto` sauf besoin particulier: l'app utilisera MLX si disponible.
-
-## Recalcul, checkpoints et relance
-
-Le dossier `work` contient les fichiers intermediaires:
-
-- WAV pretraite en mono 16 kHz;
-- resultat ASR;
-- alignement;
-- resultat final avec ou sans diarisation.
-
-Quand tu relances le meme audio avec les memes reglages, l'app reutilise les checkpoints et regenere les exports rapidement.
-
-Si tu veux vraiment tout recalculer, coche `Recalculer sans reutiliser les checkpoints` dans les reglages avances, ou utilise `--force` en ligne de commande.
-
-Les checkpoints tiennent compte des reglages importants: modele, backend, langue, filtre audio, batch, device, type de calcul et options de diarisation. Si tu changes ces options, l'ancien checkpoint est ignore automatiquement.
-
-## Ligne de commande
-
-Transcrire sans separation des personnes:
-
-```bash
-python transcribe.py --audio input/reunion.m4a --no-diarization
-```
-
-Transcrire avec separation des personnes:
-
-```bash
-python transcribe.py --audio input/reunion.m4a --hf-token "$HUGGINGFACE_TOKEN"
-```
-
-Forcer un recalcul complet:
-
-```bash
-python transcribe.py --audio input/reunion.m4a --force
-```
-
-Verifier l'environnement:
-
-```bash
-python transcribe.py --doctor
-```
-
-Tester le token Hugging Face:
-
-```bash
-python transcribe.py --check-token
-```
-
-Options utiles:
-
-- `--model large-v3|large-v3-turbo|medium|small`
-- `--asr-backend auto|whisperx|mlx`
-- `--language auto|fr|en`
-- `--audio-filter loudnorm|voice-clean|none`
-- `--trim-silence`
-- `--speakers 3`
-- `--min-speakers 2 --max-speakers 5`
-- `--speaker-map "SPEAKER_00=Alice,SPEAKER_01=Bruno"`
-- `--rename-only --speaker-map ...`
-
-Scripts pratiques:
-
-```bash
-./transcribe-latest.sh
-```
-
-```powershell
-.\transcribe-latest.ps1 -HfToken "hf_xxxxxxxxxxxxxxxxx"
-```
-
-## Exports
-
-Les fichiers sont ecrits dans `output`. Les noms contiennent le nom de l'audio et un identifiant court stable pour eviter les collisions.
-
-- `*.speaker-turns.txt`: transcription lisible par tours de parole.
-- `*.speaker-turns.md`: version Markdown.
-- `*.clean.txt`: transcription simple sans timestamps.
-- `*.speaker-segments.srt`: sous-titres avec locuteurs.
-- `*.segments.json`: segments et tours regroupes.
-- `*.notes.md`: notes automatiques avec actions, decisions et questions possibles.
-- `*.transcript.docx`: transcription editable dans Word ou Google Docs.
-- `*.whisperx.json`: sortie complete du pipeline.
-- `transcription-history.jsonl`: historique des transcriptions.
-
-## Installation comme package
-
-```bash
-python -m pip install -e .
-microwest-whisper --audio input/reunion.m4a --no-diarization
-microwest-whisper-gui
-```
-
-## Tests
-
-Les tests rapides ne lancent pas les modeles Whisper:
-
-```bash
-python -m unittest discover
-```
+- `MICROWEST_ENGINE_ROOT`: dossier qui contient `transcribe.py`, par defaut `engine/python`.
+- `MICROWEST_PYTHON`: interpreteur Python a utiliser pour le moteur, par defaut `.venv/bin/python` ou `python3`.
+- `MICROWEST_LICENSE_API_BASE`: API licence alternative, par defaut `https://iaswiss.com/api/licenses`.
+- `MICROWEST_LICENSE_STATE`: chemin de test pour le fichier `license.json`.
 
 ## Build desktop
 
-Une base PyInstaller est fournie:
-
 ```bash
-python -m pip install -e ".[desktop]"
-pyinstaller pyinstaller-gui.spec
+npm run build
 ```
 
-Les builds embarquent un fallback FFmpeg via `imageio-ffmpeg`, mais n'incluent pas les modeles Whisper/Hugging Face ni le token. Les modeles sont telecharges au premier usage dans le cache local.
+Le build Tauri lance `tsc && vite build`, compile l'application Rust, puis produit les bundles de la plateforme courante.
 
-## Releases GitHub
+## Licence
 
-Le workflow `.github/workflows/build-release.yml` lance:
+L'app appelle uniquement l'API licence IA Swiss:
 
-- les tests unitaires;
-- un build PyInstaller macOS;
-- un build PyInstaller Windows;
-- une release automatique quand un tag `v*` est pousse.
+- activation: `POST https://iaswiss.com/api/licenses/activate`;
+- validation: `POST https://iaswiss.com/api/licenses/validate`.
 
-Publier une release:
+Payload envoye:
+
+```json
+{
+  "licenseKey": "MW-XXXXX-XXXXX-XXXXX-XXXXX",
+  "machineId": "machine-id-local",
+  "appVersion": "0.2.0"
+}
+```
+
+Aucune cle Stripe n'est embarquee dans l'application. Le backend IA Swiss verifie l'abonnement actif.
+
+## Fonctionnalites actuelles
+
+- validation de licence au lancement;
+- activation et validation via l'API IA Swiss existante;
+- selection audio et dossier output via les dialogues Tauri;
+- parametrage modele, langue, backend, diarisation, batch, threads et filtres audio;
+- lancement de `engine/python/transcribe.py` en process separe;
+- progression derivee des logs existants;
+- exports attendus: DOCX, Markdown, SRT, TXT, JSON;
+- apercu texte et historique JSONL.
+
+## Tests
+
+Les tests rapides ne chargent pas les modeles Whisper:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+python3 -m unittest discover
+cargo check --manifest-path src-tauri/Cargo.toml
+npm run build:frontend
 ```
+
+## Packaging final restant
+
+En developpement, l'app utilise encore `.venv` ou `MICROWEST_PYTHON`. Pour un produit vendable sans installation manuelle:
+
+- macOS: bundle Python standalone ou sidecar signe, FFmpeg inclus, notarisation Apple;
+- Windows: Python embedded ou sidecar, FFmpeg inclus, code signing, attention antivirus;
+- Linux: AppImage/deb/rpm avec sidecar ou moteur natif, compatibilite glibc/CUDA documentee;
+- moyen terme: remplacer le sidecar Python par `whisper.cpp` ou `faster-whisper` derriere le meme contrat Tauri.
