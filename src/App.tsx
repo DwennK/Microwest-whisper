@@ -7,6 +7,7 @@ import {
   Check,
   CircleAlert,
   Clock3,
+  Download,
   FileAudio,
   FileText,
   FolderOpen,
@@ -17,12 +18,15 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import type {
   EngineStatus,
   HistoryRecord,
   LicenseCheck,
   LicenseSnapshot,
+  ModelDownloadEvent,
+  ModelInventory,
   OutputFile,
   TranscriptionEvent,
   TranscriptionRequest,
@@ -62,6 +66,10 @@ function App() {
   const [outputDir, setOutputDir] = useState("");
   const [workDir, setWorkDir] = useState("");
   const [settings, setSettings] = useState(defaultRequest);
+  const [modelInventory, setModelInventory] = useState<ModelInventory | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelProgress, setModelProgress] = useState(0);
+  const [modelMessage, setModelMessage] = useState("");
   const [running, setRunning] = useState(false);
   const [stage, setStage] = useState("En attente");
   const [progress, setProgress] = useState(0);
@@ -72,18 +80,23 @@ function App() {
   const [error, setError] = useState("");
 
   const licenseOk = Boolean(license?.cached_valid);
-  const canStart = Boolean(engine?.can_run && licenseOk && audioPath && outputDir && !running);
+  const selectedModel = modelInventory?.models.find((model) => model.id === settings.model);
+  const selectedModelReady = Boolean(selectedModel?.installed);
+  const canStart = Boolean(engine?.can_run && selectedModelReady && licenseOk && audioPath && outputDir && !running && !modelBusy);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenModel: (() => void) | undefined;
 
     const boot = async () => {
       try {
-        const [engineStatus, licenseState] = await Promise.all([
+        const [engineStatus, licenseState, modelState] = await Promise.all([
           invoke<EngineStatus>("engine_status"),
           invoke<LicenseSnapshot>("read_license_state"),
+          invoke<ModelInventory>("model_status"),
         ]);
         setEngine(engineStatus);
+        setModelInventory(modelState);
         setOutputDir(engineStatus.default_output_dir);
         setWorkDir(engineStatus.default_work_dir);
         setLicense(licenseState);
@@ -100,9 +113,13 @@ function App() {
     listen<TranscriptionEvent>("transcription-event", (event) => handleEngineEvent(event.payload)).then((dispose) => {
       unlisten = dispose;
     });
+    listen<ModelDownloadEvent>("model-download-event", (event) => handleModelDownloadEvent(event.payload)).then((dispose) => {
+      unlistenModel = dispose;
+    });
 
     return () => {
       unlisten?.();
+      unlistenModel?.();
     };
   }, []);
 
@@ -181,6 +198,23 @@ function App() {
     setLogLines((lines) => [...lines.slice(-250), `[${event.stream}] ${event.line}`]);
   }
 
+  function handleModelDownloadEvent(event: ModelDownloadEvent) {
+    setModelProgress(event.progress);
+    setModelMessage(event.line);
+    if (event.kind === "completed") {
+      setModelBusy(false);
+    }
+  }
+
+  async function refreshEngineAndModels() {
+    const [engineStatus, modelState] = await Promise.all([
+      invoke<EngineStatus>("engine_status"),
+      invoke<ModelInventory>("model_status"),
+    ]);
+    setEngine(engineStatus);
+    setModelInventory(modelState);
+  }
+
   async function chooseAudio() {
     const selected = await openDialog({
       multiple: false,
@@ -224,6 +258,38 @@ function App() {
       setError(String(validationError));
     } finally {
       setLicenseBusy(false);
+    }
+  }
+
+  async function downloadSelectedModel() {
+    setModelBusy(true);
+    setModelProgress(0);
+    setModelMessage("Préparation du téléchargement...");
+    setError("");
+    try {
+      const updated = await invoke<ModelInventory>("download_model", { model: settings.model });
+      setModelInventory(updated);
+      await refreshEngineAndModels();
+    } catch (downloadError) {
+      setError(String(downloadError));
+    } finally {
+      setModelBusy(false);
+    }
+  }
+
+  async function deleteModels() {
+    setModelBusy(true);
+    setModelProgress(0);
+    setModelMessage("");
+    setError("");
+    try {
+      const updated = await invoke<ModelInventory>("delete_downloaded_models");
+      setModelInventory(updated);
+      await refreshEngineAndModels();
+    } catch (deleteError) {
+      setError(String(deleteError));
+    } finally {
+      setModelBusy(false);
     }
   }
 
@@ -290,6 +356,7 @@ function App() {
           <div className="status-strip">
             <StatusPill ok={licenseOk} label={licenseOk ? "Licence active" : "Licence requise"} />
             <StatusPill ok={Boolean(engine?.can_run)} label={engine?.can_run ? "whisper.cpp prêt" : "Backend incomplet"} />
+            <StatusPill ok={selectedModelReady} label={selectedModelReady ? "Modèle prêt" : "Modèle requis"} />
           </div>
         </header>
 
@@ -417,7 +484,41 @@ function App() {
                   <dt>Modèle</dt>
                   <dd>{engine?.model_path || "non détecté"}</dd>
                 </div>
+                <div>
+                  <dt>Modèle sélectionné</dt>
+                  <dd>
+                    {selectedModel
+                      ? `${selectedModel.label} · ${selectedModel.installed ? `installé (${selectedModel.source})` : `à télécharger (${selectedModel.size_label})`}`
+                      : "non détecté"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Dossier modèles</dt>
+                  <dd>{modelInventory?.models_dir || "non détecté"}</dd>
+                </div>
               </dl>
+              <div className="model-actions">
+                <button className="primary" type="button" disabled={modelBusy || selectedModel?.installed} onClick={downloadSelectedModel}>
+                  {modelBusy ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+                  Télécharger
+                </button>
+                <button type="button" disabled={modelBusy || !modelInventory?.total_downloaded_bytes} onClick={deleteModels}>
+                  <Trash2 size={17} />
+                  Supprimer modèles
+                </button>
+                <button type="button" disabled={!modelInventory?.models_dir} onClick={() => modelInventory?.models_dir && openPath(modelInventory.models_dir)}>
+                  <FolderOpen size={17} />
+                  Dossier
+                </button>
+              </div>
+              {(modelBusy || modelMessage) && (
+                <div className="model-progress">
+                  <div className="progress-bar compact" aria-label="Progression téléchargement modèle">
+                    <span style={{ width: `${modelProgress}%` }} />
+                  </div>
+                  <p>{modelMessage}</p>
+                </div>
+              )}
             </div>
           </section>
         )}

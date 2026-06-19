@@ -1,4 +1,5 @@
 mod license;
+mod model_assets;
 mod paths;
 mod transcription;
 
@@ -12,6 +13,9 @@ fn main() {
             license::activate_license,
             license::validate_license,
             transcription::engine_status,
+            transcription::model_status,
+            transcription::download_model,
+            transcription::delete_downloaded_models,
             transcription::expected_outputs,
             transcription::read_history,
             transcription::read_text_preview,

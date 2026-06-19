@@ -32,6 +32,34 @@ export interface OutputFile {
   exists: boolean;
 }
 
+export interface ModelInfo {
+  id: string;
+  label: string;
+  filename: string;
+  url: string;
+  size_bytes: number;
+  size_label: string;
+  installed: boolean;
+  path: string;
+  source: "env" | "bundled" | "downloaded" | "missing" | string;
+}
+
+export interface ModelInventory {
+  models_dir: string;
+  total_downloaded_bytes: number;
+  models: ModelInfo[];
+}
+
+export interface ModelDownloadEvent {
+  kind: "started" | "progress" | "completed";
+  model: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+  progress: number;
+  line: string;
+  path: string;
+}
+
 export interface HistoryRecord {
   created_at: string;
   status: string;

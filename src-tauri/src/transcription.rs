@@ -1,4 +1,4 @@
-use crate::{license, paths};
+use crate::{license, model_assets, paths};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -15,8 +15,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 const BACKEND_NAME: &str = "whisper.cpp";
-const DEFAULT_MODEL: &str = "large-v3-turbo-q8_0";
-
 #[derive(Clone, Default)]
 pub struct TranscriptionState {
     running: Arc<Mutex<bool>>,
@@ -121,6 +119,27 @@ struct NativeTranscript {
 #[tauri::command]
 pub fn engine_status(app: AppHandle) -> EngineStatus {
     build_engine_status(Some(&app))
+}
+
+#[tauri::command]
+pub fn model_status(app: AppHandle) -> model_assets::ModelInventory {
+    let engine_root = find_engine_root(Some(&app));
+    model_assets::model_status(&engine_root)
+}
+
+#[tauri::command]
+pub async fn download_model(
+    app: AppHandle,
+    model: String,
+) -> Result<model_assets::ModelInventory, String> {
+    let engine_root = find_engine_root(Some(&app));
+    model_assets::download_model(&app, &engine_root, &model).await
+}
+
+#[tauri::command]
+pub fn delete_downloaded_models(app: AppHandle) -> Result<model_assets::ModelInventory, String> {
+    let engine_root = find_engine_root(Some(&app));
+    model_assets::delete_downloaded_models(&engine_root)
 }
 
 #[tauri::command]
@@ -295,7 +314,8 @@ fn run_transcription(
         5,
     )?;
 
-    let model_path = resolve_model_path(Path::new(&status.engine_root), &request.model);
+    let model_path =
+        model_assets::resolve_model_path(Path::new(&status.engine_root), &request.model);
     if !model_path.exists {
         return Err(format!(
             "Modèle whisper.cpp introuvable: {}. Configure MICROWEST_WHISPER_MODEL ou place le modèle dans engine/whispercpp/models.",
@@ -662,7 +682,7 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
     let default_work_dir = paths::default_work_dir(&data_root);
     let whisper_cli = find_whisper_cli(&engine_root);
     let ffmpeg = find_ffmpeg(&engine_root);
-    let model_path = resolve_status_model_path(&engine_root);
+    let model_path = model_assets::resolve_status_model_path(&engine_root);
 
     let mut missing = Vec::new();
     if !whisper_cli.exists {
@@ -671,15 +691,14 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
     if !ffmpeg.exists {
         missing.push("FFmpeg");
     }
-    if !model_path.exists {
-        missing.push("modèle GGML/GGUF");
-    }
     let can_run = missing.is_empty();
-    let message = if can_run {
+    let message = if can_run && model_path.exists {
         "Backend natif whisper.cpp prêt.".to_string()
+    } else if can_run {
+        "Backend natif prêt. Téléchargez un modèle dans Réglages.".to_string()
     } else {
         format!(
-            "Backend whisper.cpp incomplet: {} manquant(s). Configure MICROWEST_WHISPER_CLI, MICROWEST_FFMPEG ou MICROWEST_WHISPER_MODEL.",
+            "Composants audio manquants dans ce build: {}.",
             missing.join(", ")
         )
     };
@@ -692,7 +711,7 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
         whisper_cli: whisper_cli.path.to_string_lossy().to_string(),
         ffmpeg: ffmpeg.path.to_string_lossy().to_string(),
         model_path: model_path.path.to_string_lossy().to_string(),
-        default_model: DEFAULT_MODEL.to_string(),
+        default_model: model_assets::DEFAULT_MODEL.to_string(),
         default_output_dir: default_output_dir.to_string_lossy().to_string(),
         default_work_dir: default_work_dir.to_string_lossy().to_string(),
         can_run,
@@ -846,64 +865,6 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     env::split_paths(&path_env)
         .map(|path| path.join(&executable))
         .find(|path| path.exists())
-}
-
-fn resolve_model_path(engine_root: &Path, requested: &str) -> ResolvedPath {
-    if let Ok(path) = env::var("MICROWEST_WHISPER_MODEL") {
-        let path = PathBuf::from(path);
-        return ResolvedPath {
-            exists: path.exists(),
-            path,
-        };
-    }
-
-    let requested = requested.trim();
-    let model_name = if requested.is_empty() || requested == "auto" {
-        DEFAULT_MODEL
-    } else {
-        requested
-    };
-    let direct = PathBuf::from(model_name);
-    if direct.is_absolute() || direct.components().count() > 1 {
-        return ResolvedPath {
-            exists: direct.exists(),
-            path: direct,
-        };
-    }
-
-    let models_dir = engine_root.join("models");
-    let candidates = [
-        models_dir.join(model_name),
-        models_dir.join(format!("{model_name}.bin")),
-        models_dir.join(format!("{model_name}.gguf")),
-        models_dir.join(format!("ggml-{model_name}.bin")),
-        models_dir.join(format!("ggml-{model_name}.gguf")),
-    ];
-    candidates
-        .iter()
-        .find(|candidate| candidate.exists())
-        .map(|path| ResolvedPath {
-            path: path.to_path_buf(),
-            exists: true,
-        })
-        .unwrap_or_else(|| ResolvedPath {
-            path: models_dir.join(format!("ggml-{model_name}.bin")),
-            exists: false,
-        })
-}
-
-fn resolve_status_model_path(engine_root: &Path) -> ResolvedPath {
-    let default = resolve_model_path(engine_root, DEFAULT_MODEL);
-    if default.exists {
-        return default;
-    }
-
-    let lighter = resolve_model_path(engine_root, "large-v3-turbo-q5_0");
-    if lighter.exists {
-        return lighter;
-    }
-
-    default
 }
 
 fn audio_preprocess_signature(request: &TranscriptionRequest) -> Value {

@@ -402,6 +402,24 @@ select:focus {
   font-size: 12px;
 }
 
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.model-progress {
+  margin-top: 14px;
+}
+
+.model-progress p {
+  margin: 8px 0 0;
+  color: #60717d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .file-target {
   display: grid;
   gap: 8px;
@@ -516,6 +534,11 @@ select:focus {
   overflow: hidden;
   border-radius: 999px;
   background: #e3e9ee;
+}
+
+.progress-bar.compact {
+  height: 8px;
+  margin: 0;
 }
 
 .progress-bar span {
