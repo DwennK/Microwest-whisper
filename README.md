@@ -164,8 +164,8 @@ Publier une release:
 3. Créer un tag `vX.Y.Z`.
 4. Pousser `main` puis le tag.
 5. GitHub Actions construit macOS, Windows et Linux.
-6. Le workflow génère les signatures updater et `latest.json`.
-7. La release GitHub publie les installateurs et le manifeste updater.
+6. Le workflow génère les signatures updater, `latest.json` et `SHA256SUMS.txt`.
+7. La release GitHub publie les installateurs, signatures, checksums et le manifeste updater.
 
 Commande release locale:
 
@@ -195,7 +195,7 @@ Payload:
 {
   "licenseKey": "MW-XXXXX-XXXXX-XXXXX-XXXXX",
   "machineId": "machine-id-local",
-  "appVersion": "0.2.1"
+  "appVersion": "0.2.2"
 }
 ```
 
@@ -212,6 +212,7 @@ export MICROWEST_LICENSE_STATE=/tmp/microwest-license.json
 
 ```bash
 npm run build:frontend
+cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -228,3 +229,5 @@ Avant une distribution commerciale complète:
 - signer Windows pour réduire les alertes SmartScreen/antivirus;
 - valider les bundles Linux AppImage/deb/rpm sur distributions cibles;
 - vérifier la licence de redistribution FFmpeg selon les binaires utilisés.
+
+L'app expose aussi un écran `À propos` avec version, backend, plateforme, licence, endpoint updater et chemins locaux.

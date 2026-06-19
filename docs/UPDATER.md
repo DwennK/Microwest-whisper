@@ -27,11 +27,12 @@ Si cette cle est perdue, les installations deja distribuees ne pourront plus acc
 
 1. Mettre a jour la version dans `package.json`, `src-tauri/Cargo.toml` et `src-tauri/tauri.conf.json`.
 2. Committer le changement de version.
-3. Creer et pousser un tag SemVer, par exemple `v0.2.1`.
+3. Creer et pousser un tag SemVer, par exemple `v0.2.2`.
 4. Le workflow GitHub construit macOS, Windows et Linux.
 5. Sur le tag, `npm run build:release` genere les signatures updater.
 6. `scripts/generate-updater-manifest.mjs` cree `latest.json`.
-7. La release GitHub publie les installateurs, signatures et `latest.json`.
+7. Le workflow genere `SHA256SUMS.txt`.
+8. La release GitHub publie les installateurs, signatures, checksums et `latest.json`.
 
 ## Comportement app
 
@@ -49,3 +50,4 @@ Sur Windows, Tauri quitte l'application au moment de l'installation de l'update,
 - Le manifeste actuel cible GitHub Releases, sans serveur dynamique.
 - Le workflow choisit l'installateur NSIS `.exe` plutot que MSI quand les deux existent.
 - Le manifeste macOS utilise `darwin-aarch64` par defaut pour les artefacts `.app.tar.gz` sans architecture dans le nom. Ajouter un build Intel/universal demandera d'ajuster la matrice macOS et `MACOS_UPDATER_TARGET`.
+- Les checksums SHA-256 sont publies pour verification manuelle des artefacts, mais l'auto-update Tauri repose sur les signatures `.sig`.
