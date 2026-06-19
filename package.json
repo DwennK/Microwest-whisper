@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:release": "tauri build --config src-tauri/tauri.release.conf.json",
     "tauri": "tauri",
     "dev:frontend": "vite --host 127.0.0.1 --port 1420",
     "prepare:whispercpp": "node scripts/prepare-whispercpp-resources.mjs",
@@ -16,6 +17,8 @@
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

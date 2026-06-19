@@ -3,6 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
+import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import {
   Check,
   CircleAlert,
@@ -77,6 +80,9 @@ function App() {
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [preview, setPreview] = useState("");
   const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateMessage, setUpdateMessage] = useState("");
   const [error, setError] = useState("");
 
   const licenseOk = Boolean(license?.cached_valid);
@@ -293,6 +299,53 @@ function App() {
     }
   }
 
+  async function checkForUpdates() {
+    setUpdateBusy(true);
+    setUpdateProgress(0);
+    setUpdateMessage("Recherche de mise à jour...");
+    setError("");
+
+    try {
+      const update = await check();
+      if (!update) {
+        setUpdateMessage("Application à jour.");
+        return;
+      }
+
+      let downloaded = 0;
+      let contentLength = 0;
+      setUpdateMessage(`Version ${update.version} disponible. Téléchargement...`);
+
+      await update.downloadAndInstall((event: DownloadEvent) => {
+        if (event.event === "Started") {
+          downloaded = 0;
+          contentLength = event.data.contentLength ?? 0;
+          setUpdateProgress(0);
+          setUpdateMessage(`Téléchargement ${update.version}...`);
+          return;
+        }
+
+        if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (contentLength > 0) {
+            setUpdateProgress(Math.min(99, Math.round((downloaded / contentLength) * 100)));
+          }
+          return;
+        }
+
+        setUpdateProgress(100);
+        setUpdateMessage("Mise à jour installée. Redémarrage...");
+      });
+
+      await relaunch();
+    } catch (updateError) {
+      setUpdateMessage("Mise à jour impossible.");
+      setError(String(updateError));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
   async function startTranscription() {
     if (!canStart) return;
     setError("");
@@ -353,10 +406,22 @@ function App() {
             <p className="eyebrow">Transcription locale</p>
             <h1>{steps[activeStep]}</h1>
           </div>
-          <div className="status-strip">
-            <StatusPill ok={licenseOk} label={licenseOk ? "Licence active" : "Licence requise"} />
-            <StatusPill ok={Boolean(engine?.can_run)} label={engine?.can_run ? "whisper.cpp prêt" : "Backend incomplet"} />
-            <StatusPill ok={selectedModelReady} label={selectedModelReady ? "Modèle prêt" : "Modèle requis"} />
+          <div className="status-area">
+            <div className="status-strip">
+              <StatusPill ok={licenseOk} label={licenseOk ? "Licence active" : "Licence requise"} />
+              <StatusPill ok={Boolean(engine?.can_run)} label={engine?.can_run ? "whisper.cpp prêt" : "Backend incomplet"} />
+              <StatusPill ok={selectedModelReady} label={selectedModelReady ? "Modèle prêt" : "Modèle requis"} />
+              <button className="update-button" type="button" disabled={updateBusy} onClick={checkForUpdates}>
+                {updateBusy ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+                Mise à jour
+              </button>
+            </div>
+            {updateMessage && (
+              <div className="update-inline">
+                <span>{updateMessage}</span>
+                {updateBusy && updateProgress > 0 && <strong>{updateProgress}%</strong>}
+              </div>
+            )}
           </div>
         </header>
 

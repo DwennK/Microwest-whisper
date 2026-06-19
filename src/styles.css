@@ -237,6 +237,12 @@ h2 {
   gap: 8px;
 }
 
+.status-area {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -262,6 +268,27 @@ h2 {
 
 .status-pill.warn span {
   background: #c97d24;
+}
+
+.update-button {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.update-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 440px;
+  color: #60717d;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.update-inline strong {
+  color: #1c5d78;
 }
 
 .notice {

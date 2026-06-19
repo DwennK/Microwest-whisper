@@ -5,6 +5,7 @@ work/
 *.pyc
 __pycache__/
 .env
+.tauri/
 *.log
 .DS_Store
 node_modules/

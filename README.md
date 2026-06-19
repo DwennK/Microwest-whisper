@@ -70,6 +70,12 @@ Pour preparer explicitement une autre plateforme:
 MICROWEST_BUNDLE_PLATFORM=windows-x86_64 npm run prepare:whispercpp
 ```
 
+## Auto-update
+
+L'app inclut un bouton de verification manuelle des mises a jour via GitHub Releases. Les builds de tags `v*` generent les signatures Tauri et le manifeste `latest.json`; les builds classiques sur `main` ne signent pas d'artefacts updater.
+
+Voir [docs/UPDATER.md](docs/UPDATER.md) pour les secrets GitHub et le flux de publication.
+
 ## Licence
 
 L'app appelle uniquement l'API licence IA Swiss:
