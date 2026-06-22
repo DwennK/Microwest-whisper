@@ -24,6 +24,14 @@
 - L'UI ne montre plus les options diarisation, pyannote, Hugging Face ou renommage locuteurs.
 - L'UI permet de supprimer les modèles téléchargés.
 
+## Diarisation et artefacts herites
+
+Le backend `whisper.cpp` livre uniquement des segments horodates. Il ne genere pas de labels locuteur, de tours de parole, de fichiers `speaker-turns.*`, de fichiers `speaker-segments.srt` ou de sorties `whisperx.json`.
+
+Les dossiers `output/`, `work/`, `output-v2/` et `work-v2/` sont ignores par Git et peuvent contenir des resultats d'anciens prototypes WhisperX/pyannote. Ces fichiers ne doivent pas etre utilises comme reference fonctionnelle pour la version actuelle.
+
+Toute reintroduction de diarisation doit passer par une version separee, decrite dans `docs/DIARIZATION_V2.md`, avec un contrat d'exports et des tests dedies.
+
 ## Resolution des binaires
 
 Ordre de resolution:
