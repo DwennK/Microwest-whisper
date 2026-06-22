@@ -20,6 +20,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 const BACKEND_NAME: &str = "whisper.cpp";
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
+type EventSink = Arc<dyn Fn(&str, &str, &str, &str, u8) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct TranscriptionState {
@@ -415,6 +416,16 @@ fn run_transcription(
     request: TranscriptionRequest,
     status: EngineStatus,
 ) -> Result<(), String> {
+    let events = tauri_event_sink(app.clone());
+    run_transcription_inner(state, request, status, events)
+}
+
+fn run_transcription_inner(
+    state: TranscriptionState,
+    request: TranscriptionRequest,
+    status: EngineStatus,
+    events: EventSink,
+) -> Result<(), String> {
     let audio = PathBuf::from(request.audio_path.trim());
     if !audio.exists() {
         return Err(format!(
@@ -442,8 +453,8 @@ fn run_transcription(
 
     let result = (|| {
         ensure_not_cancelled(&state)?;
-        emit_event(
-            &app,
+        emit_event_to(
+            &events,
             "started",
             "system",
             "Backend natif whisper.cpp initialisé.",
@@ -460,10 +471,10 @@ fn run_transcription(
             ));
         }
 
-        prepare_wav(&app, &state, &paths, &request, Path::new(&status.ffmpeg))?;
+        prepare_wav(&events, &state, &paths, &request, Path::new(&status.ffmpeg))?;
         ensure_not_cancelled(&state)?;
         let transcript = run_whisper_cpp(
-            &app,
+            &events,
             &state,
             &paths,
             &request,
@@ -471,8 +482,8 @@ fn run_transcription(
             &model_path.path,
         )?;
         ensure_not_cancelled(&state)?;
-        emit_event(
-            &app,
+        emit_event_to(
+            &events,
             "log",
             "system",
             "Génération des exports...",
@@ -487,10 +498,10 @@ fn run_transcription(
             transcript.duration_seconds,
             "success",
         )?;
-        cleanup_temporary_wav(&app, &paths)?;
+        cleanup_temporary_wav(&events, &paths)?;
 
-        emit_event(
-            &app,
+        emit_event_to(
+            &events,
             "completed",
             "system",
             "Process terminé.",
@@ -501,13 +512,13 @@ fn run_transcription(
     })();
 
     if result.is_err() {
-        let _ = cleanup_temporary_wav(&app, &paths);
+        let _ = cleanup_temporary_wav(&events, &paths);
     }
     result
 }
 
 fn prepare_wav(
-    app: &AppHandle,
+    events: &EventSink,
     state: &TranscriptionState,
     paths: &TranscriptionPaths,
     request: &TranscriptionRequest,
@@ -521,8 +532,8 @@ fn prepare_wav(
             .wav
             .wav_metadata_is_fresh(&paths.audio, &metadata_path, &signature)
     {
-        emit_event(
-            app,
+        emit_event_to(
+            events,
             "log",
             "system",
             &format!(
@@ -535,8 +546,8 @@ fn prepare_wav(
         return Ok(());
     }
 
-    emit_event(
-        app,
+    emit_event_to(
+        events,
         "log",
         "system",
         "Preparing clean 16 kHz mono WAV for ASR...",
@@ -566,8 +577,8 @@ fn prepare_wav(
         paths.wav.to_string_lossy().to_string(),
     ]);
 
-    emit_event(
-        app,
+    emit_event_to(
+        events,
         "log",
         "system",
         &command_preview(ffmpeg, &args),
@@ -578,7 +589,7 @@ fn prepare_wav(
     command.args(&args);
     configure_child_binary_env(&mut command, ffmpeg);
     run_logged_command(
-        app.clone(),
+        events.clone(),
         state,
         command,
         CommandKind::Ffmpeg,
@@ -595,7 +606,7 @@ fn prepare_wav(
 }
 
 fn run_whisper_cpp(
-    app: &AppHandle,
+    events: &EventSink,
     state: &TranscriptionState,
     paths: &TranscriptionPaths,
     request: &TranscriptionRequest,
@@ -635,16 +646,16 @@ fn run_whisper_cpp(
         args.push("-ng".to_string());
     }
 
-    emit_event(
-        app,
+    emit_event_to(
+        events,
         "log",
         "system",
         "Loading whisper.cpp model...",
         "Chargement modèle",
         25,
     )?;
-    emit_event(
-        app,
+    emit_event_to(
+        events,
         "log",
         "system",
         &command_preview(whisper_cli, &args),
@@ -655,7 +666,7 @@ fn run_whisper_cpp(
     command.args(&args).current_dir(&paths.work_dir);
     configure_child_binary_env(&mut command, whisper_cli);
     run_logged_command(
-        app.clone(),
+        events.clone(),
         state,
         command,
         CommandKind::Whisper,
@@ -833,7 +844,7 @@ fn append_history(
 }
 
 fn run_logged_command(
-    app: AppHandle,
+    events: EventSink,
     state: &TranscriptionState,
     mut command: Command,
     kind: CommandKind,
@@ -846,8 +857,8 @@ fn run_logged_command(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    let stdout_handle = stdout.map(|stream| spawn_reader(app.clone(), "stdout", stream));
-    let stderr_handle = stderr.map(|stream| spawn_reader(app.clone(), "stderr", stream));
+    let stdout_handle = stdout.map(|stream| spawn_reader(events.clone(), "stdout", stream));
+    let stderr_handle = stderr.map(|stream| spawn_reader(events.clone(), "stderr", stream));
 
     {
         let mut active_child = state
@@ -974,7 +985,11 @@ fn format_duration_human(duration: Duration) -> String {
     }
 }
 
-fn spawn_reader<R>(app: AppHandle, stream_name: &'static str, stream: R) -> thread::JoinHandle<()>
+fn spawn_reader<R>(
+    events: EventSink,
+    stream_name: &'static str,
+    stream: R,
+) -> thread::JoinHandle<()>
 where
     R: Read + Send + 'static,
 {
@@ -982,12 +997,16 @@ where
         let reader = BufReader::new(stream);
         for line in reader.lines().map_while(Result::ok) {
             let (stage, progress) = stage_from_line(&line);
-            let _ = emit_event(&app, "log", stream_name, &line, &stage, progress);
+            let _ = emit_event_to(&events, "log", stream_name, &line, &stage, progress);
         }
     })
 }
 
 fn stage_from_line(line: &str) -> (String, u8) {
+    if let Some(progress) = whisper_progress_from_line(line) {
+        return ("Transcription".to_string(), progress);
+    }
+
     let mappings = [
         ("Preparing clean", "Préparation audio", 10),
         ("Using existing preprocessed WAV", "Audio préparé", 15),
@@ -1007,6 +1026,63 @@ fn stage_from_line(line: &str) -> (String, u8) {
         }
     }
     ("En cours".to_string(), 0)
+}
+
+fn whisper_progress_from_line(line: &str) -> Option<u8> {
+    let lower = line.to_ascii_lowercase();
+    if !(lower.contains('%') || lower.contains("progress")) {
+        return None;
+    }
+
+    let percent = percent_before_marker(line, '%')
+        .or_else(|| number_after_keyword(line, "progress"))?
+        .clamp(0.0, 100.0);
+
+    Some((35.0 + percent * 0.55).round().clamp(35.0, 90.0) as u8)
+}
+
+fn percent_before_marker(line: &str, marker: char) -> Option<f64> {
+    let marker_index = line.find(marker)?;
+    line[..marker_index]
+        .rsplit(|character: char| {
+            !(character.is_ascii_digit() || character == '.' || character == ',')
+        })
+        .find_map(parse_progress_number)
+}
+
+fn number_after_keyword(line: &str, keyword: &str) -> Option<f64> {
+    let lower = line.to_ascii_lowercase();
+    let keyword_index = lower.find(keyword)?;
+    line[keyword_index + keyword.len()..]
+        .split(|character: char| {
+            !(character.is_ascii_digit() || character == '.' || character == ',')
+        })
+        .find_map(parse_progress_number)
+}
+
+fn parse_progress_number(part: &str) -> Option<f64> {
+    let normalized = part.trim().replace(',', ".");
+    normalized
+        .parse::<f64>()
+        .ok()
+        .filter(|value| (0.0..=100.0).contains(value))
+}
+
+fn tauri_event_sink(app: AppHandle) -> EventSink {
+    Arc::new(move |kind, stream, line, stage, progress| {
+        emit_event(&app, kind, stream, line, stage, progress)
+    })
+}
+
+fn emit_event_to(
+    events: &EventSink,
+    kind: &str,
+    stream: &str,
+    line: &str,
+    stage: &str,
+    progress: u8,
+) -> Result<(), String> {
+    events(kind, stream, line, stage, progress)
 }
 
 fn emit_event(
@@ -1313,7 +1389,7 @@ fn build_audio_filter(request: &TranscriptionRequest) -> Option<String> {
     (!filters.is_empty()).then(|| filters.join(","))
 }
 
-fn cleanup_temporary_wav(app: &AppHandle, paths: &TranscriptionPaths) -> Result<(), String> {
+fn cleanup_temporary_wav(events: &EventSink, paths: &TranscriptionPaths) -> Result<(), String> {
     if env::var("MICROWEST_KEEP_TEMP_WAV").ok().as_deref() == Some("1") {
         return Ok(());
     }
@@ -1331,8 +1407,8 @@ fn cleanup_temporary_wav(app: &AppHandle, paths: &TranscriptionPaths) -> Result<
         }
     }
     if !removed.is_empty() {
-        emit_event(
-            app,
+        emit_event_to(
+            events,
             "log",
             "system",
             "Fichiers temporaires nettoyés.",
@@ -1783,6 +1859,8 @@ fn set_running_direct(state: &TranscriptionState, value: bool) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn parses_whisper_cpp_json_transcription_shape() {
@@ -1893,6 +1971,15 @@ mod tests {
     }
 
     #[test]
+    fn maps_whisper_percentage_logs_to_transcription_progress() {
+        let (stage, progress) =
+            stage_from_line("main: processing file.wav with 8 threads; progress = 50%");
+
+        assert_eq!(stage, "Transcription");
+        assert_eq!(progress, 63);
+    }
+
+    #[test]
     fn writes_selection_exports_without_touching_full_exports() {
         let root =
             env::temp_dir().join(format!("microwest-selection-test-{}", uuid::Uuid::new_v4()));
@@ -1933,5 +2020,152 @@ mod tests {
         assert!(srt_content.contains("Segment choisi"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runs_backend_pipeline_with_fake_ffmpeg_and_whisper_cli() {
+        let root = env::temp_dir().join(format!("microwest-e2e-test-{}", uuid::Uuid::new_v4()));
+        let bin_dir = root.join("bin");
+        let output_dir = root.join("out");
+        let work_dir = root.join("work");
+        let model = root.join("ggml-test.bin");
+        let audio = root.join("meeting.wav");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::create_dir_all(&work_dir).unwrap();
+        fs::write(&model, b"model").unwrap();
+        fs::write(&audio, b"audio").unwrap();
+
+        let ffmpeg = bin_dir.join("ffmpeg");
+        write_executable_script(
+            &ffmpeg,
+            r#"#!/bin/sh
+last=""
+for arg in "$@"; do
+  last="$arg"
+done
+printf 'fake wav' > "$last"
+"#,
+        );
+
+        let whisper_cli = bin_dir.join("whisper-cli");
+        write_executable_script(
+            &whisper_cli,
+            r#"#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-of" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+printf 'progress = 50%%\n' >&2
+json_out="${out%.*}.json"
+srt_out="${out%.*}.srt"
+cat > "$json_out" <<'JSON'
+{
+  "result": { "language": "fr" },
+  "transcription": [
+    {
+      "timestamps": { "from": "00:00:00,000", "to": "00:00:01,500" },
+      "text": " Bonjour depuis le faux backend "
+    },
+    {
+      "offsets": { "from": 1500, "to": 2500 },
+      "text": " Suite exportée "
+    }
+  ]
+}
+JSON
+cat > "$srt_out" <<'SRT'
+1
+00:00:00,000 --> 00:00:01,500
+Bonjour depuis le faux backend
+SRT
+"#,
+        );
+
+        let events_seen = Arc::new(Mutex::new(Vec::<TranscriptionEvent>::new()));
+        let events_for_sink = events_seen.clone();
+        let events: EventSink = Arc::new(move |kind, stream, line, stage, progress| {
+            events_for_sink.lock().unwrap().push(TranscriptionEvent {
+                kind: kind.to_string(),
+                stream: stream.to_string(),
+                line: line.to_string(),
+                stage: stage.to_string(),
+                progress,
+            });
+            Ok(())
+        });
+
+        let status = EngineStatus {
+            backend: BACKEND_NAME.to_string(),
+            engine_root: root.to_string_lossy().to_string(),
+            whisper_cli: whisper_cli.to_string_lossy().to_string(),
+            ffmpeg: ffmpeg.to_string_lossy().to_string(),
+            model_path: model.to_string_lossy().to_string(),
+            default_model: model.to_string_lossy().to_string(),
+            default_output_dir: output_dir.to_string_lossy().to_string(),
+            default_work_dir: work_dir.to_string_lossy().to_string(),
+            platform: env::consts::OS.to_string(),
+            architecture: env::consts::ARCH.to_string(),
+            can_run: true,
+            message: "test".to_string(),
+        };
+        let request = TranscriptionRequest {
+            audio_path: audio.to_string_lossy().to_string(),
+            output_dir: output_dir.to_string_lossy().to_string(),
+            work_dir: Some(work_dir.to_string_lossy().to_string()),
+            model: model.to_string_lossy().to_string(),
+            language: "fr".to_string(),
+            audio_filter: "none".to_string(),
+            threads: 0,
+            device: "cpu".to_string(),
+            trim_silence: false,
+            force: true,
+        };
+
+        run_transcription_inner(TranscriptionState::default(), request, status, events).unwrap();
+
+        let stem = paths::transcript_output_stem(&audio);
+        let expected_suffixes = [
+            ".transcript.txt",
+            ".transcript.md",
+            ".clean.txt",
+            ".segments.srt",
+            ".segments.json",
+            ".transcript.docx",
+            ".whispercpp.json",
+        ];
+        for suffix in expected_suffixes {
+            assert!(
+                output_dir.join(format!("{stem}{suffix}")).exists(),
+                "missing output suffix {suffix}"
+            );
+        }
+
+        let clean_text = fs::read_to_string(output_dir.join(format!("{stem}.clean.txt"))).unwrap();
+        assert!(clean_text.contains("Bonjour depuis le faux backend"));
+        assert!(clean_text.contains("Suite exportée"));
+
+        let progress_events = events_seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.stage == "Transcription" && event.progress > 35)
+            .count();
+        assert!(progress_events > 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(path: &Path, content: &str) {
+        fs::write(path, content).unwrap();
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
     }
 }
