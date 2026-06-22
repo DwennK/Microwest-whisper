@@ -54,6 +54,9 @@ jobs:
       - name: Check Tauri backend
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
+      - name: Test Tauri backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   build:
     name: Build ${{ matrix.name }}
     needs: validate
