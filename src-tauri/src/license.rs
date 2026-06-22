@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
-use std::{env, fs, path::PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::{env, fs, io::Write, path::PathBuf};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_API_BASE: &str = "https://iaswiss.com/api/licenses";
@@ -241,6 +243,25 @@ fn write_state(state: &Value) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let content = serde_json::to_string_pretty(state).map_err(|error| error.to_string())?;
+    write_private_file(&path, content.as_bytes())
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &PathBuf, content: &[u8]) -> Result<(), String> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    file.write_all(content).map_err(|error| error.to_string())?;
+    file.flush().map_err(|error| error.to_string())?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &PathBuf, content: &[u8]) -> Result<(), String> {
     fs::write(path, content).map_err(|error| error.to_string())
 }
 
@@ -411,5 +432,32 @@ fn license_error_message(reason: &str) -> String {
         "missing_fields" => "Demande de licence incomplète.".to_string(),
         "server_error" => "Erreur serveur pendant la vérification.".to_string(),
         other => format!("Licence refusée ({other})."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_license_state_with_private_file_permissions() {
+        let root = env::temp_dir().join(format!("microwest-license-test-{}", uuid::Uuid::new_v4()));
+        let path = root.join("license.json");
+        fs::create_dir_all(&root).unwrap();
+
+        let content = serde_json::to_vec_pretty(&json!({
+            "license_key": "MW-TEST",
+            "valid_until": "2099-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        write_private_file(&path, &content).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        let _ = fs::remove_dir_all(root);
     }
 }
