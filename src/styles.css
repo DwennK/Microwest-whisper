@@ -716,6 +716,21 @@ select:focus {
   padding-right: 2px;
 }
 
+.segment-virtual-list {
+  display: block;
+  min-height: 220px;
+}
+
+.segment-virtual-spacer {
+  position: relative;
+}
+
+.segment-virtual-stack {
+  display: grid;
+  gap: 10px;
+  will-change: transform;
+}
+
 .segment-row {
   display: grid;
   grid-template-columns: 26px 88px minmax(0, 1fr);
@@ -779,6 +794,15 @@ select:focus {
   background: #ffffff;
   font: inherit;
   line-height: 1.45;
+}
+
+.segment-virtual-list .segment-row {
+  min-height: 96px;
+}
+
+.segment-virtual-list .segment-row textarea {
+  height: 66px;
+  resize: none;
 }
 
 .segment-row textarea:focus {
