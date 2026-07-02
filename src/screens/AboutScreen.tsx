@@ -82,11 +82,11 @@ export function AboutScreen({
           </div>
           <div>
             <dt>Sorties</dt>
-            <dd>{appInfo?.default_output_dir ?? outputDir}</dd>
+            <dd>{outputDir || appInfo?.default_output_dir || "non détecté"}</dd>
           </div>
           <div>
             <dt>Travail temporaire</dt>
-            <dd>{appInfo?.default_work_dir ?? workDir}</dd>
+            <dd>{workDir || appInfo?.default_work_dir || "non détecté"}</dd>
           </div>
           <div>
             <dt>Licence locale</dt>

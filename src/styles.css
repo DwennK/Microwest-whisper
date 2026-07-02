@@ -307,6 +307,13 @@ h2 {
   background: #fff3f1;
 }
 
+.notice.warning {
+  margin-bottom: 14px;
+  border: 1px solid #f1d5a9;
+  color: #76470f;
+  background: #fff8ec;
+}
+
 .screen {
   animation: enter 220ms ease both;
 }

@@ -1,6 +1,7 @@
 .venv/
 input/
 output/
+Transcriptions/
 work/
 *.pyc
 __pycache__/

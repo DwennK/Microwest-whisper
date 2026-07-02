@@ -152,7 +152,10 @@ pub async fn download_model(
 
     let response = reqwest::Client::new()
         .get(model_url(spec))
-        .header("User-Agent", "MicrowestWhisper/0.2.0")
+        .header(
+            "User-Agent",
+            format!("MicrowestWhisper/{}", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .await
         .map_err(|error| error.to_string())?

@@ -10,6 +10,7 @@ interface StageStep {
 interface ProgressScreenProps {
   running: boolean;
   canStart: boolean;
+  disabledReason: string;
   stage: string;
   progress: number;
   elapsedSeconds: number;
@@ -25,6 +26,7 @@ interface ProgressScreenProps {
 export function ProgressScreen({
   running,
   canStart,
+  disabledReason,
   stage,
   progress,
   elapsedSeconds,
@@ -63,6 +65,7 @@ export function ProgressScreen({
         <div className="progress-bar" aria-label="Progression transcription">
           <span style={{ width: `${progress}%` }} />
         </div>
+        {!canStart && !running && disabledReason && <p className="inline-status">{disabledReason}</p>}
         <div className="stage-grid">
           {stageSteps.map((item) => (
             <div className={item.stage === stage ? "stage-card is-current" : progress >= item.min ? "stage-card is-done" : "stage-card"} key={item.stage}>

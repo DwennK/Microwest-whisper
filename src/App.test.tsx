@@ -31,7 +31,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 }));
 
 describe("App", () => {
-  it("boots with mocked Tauri state and renders the license screen", async () => {
+  it("boots with mocked Tauri state and skips to audio when the license is valid", async () => {
     listenMock.mockResolvedValue(() => undefined);
     invokeMock.mockImplementation((command: string) => {
       if (command === "engine_status") {
@@ -113,8 +113,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Licence" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Audio" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByText("Licence active").length).toBeGreaterThan(0));
+    expect(screen.getByRole("button", { name: /Licence/ })).toBeInTheDocument();
     expect(screen.getByText("Moteur prêt")).toBeInTheDocument();
     expect(listenMock).toHaveBeenCalledWith("transcription-event", expect.any(Function));
     expect(listenMock).toHaveBeenCalledWith("model-download-event", expect.any(Function));

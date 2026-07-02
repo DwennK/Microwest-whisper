@@ -30,7 +30,6 @@ import type {
 } from "./types";
 
 const steps = ["Licence", "Audio", "Réglages", "Progression", "Résultats", "À propos"] as const;
-const navSteps = ["Audio", "Réglages", "Progression", "Résultats", "À propos"] as const;
 const audioExtensions = ["m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg"];
 
 const defaultRequest: Omit<TranscriptionRequest, "audio_path" | "output_dir"> = {
@@ -118,11 +117,27 @@ function App() {
     setActiveStep(3);
   }, []);
 
+  const handleRefreshOutputs = useCallback(async (audio = audioPath, dir = outputDir) => {
+    try {
+      await refreshOutputs(audio, dir);
+    } catch (refreshError) {
+      setError(`Chargement des résultats impossible: ${String(refreshError)}`);
+    }
+  }, [audioPath, outputDir, refreshOutputs]);
+
+  const handleRefreshHistory = useCallback(async (dir = outputDir) => {
+    try {
+      await refreshHistory(dir);
+    } catch (refreshError) {
+      setError(`Chargement de l'historique impossible: ${String(refreshError)}`);
+    }
+  }, [outputDir, refreshHistory]);
+
   const handleTranscriptionCompleted = useCallback(() => {
-    void refreshOutputs();
-    void refreshHistory();
+    void handleRefreshOutputs();
+    void handleRefreshHistory();
     setActiveStep(4);
-  }, [refreshHistory, refreshOutputs]);
+  }, [handleRefreshHistory, handleRefreshOutputs]);
 
   const transcription = useTranscription({
     onStarted: handleTranscriptionStarted,
@@ -131,6 +146,16 @@ function App() {
   });
 
   const canStart = Boolean(engine?.can_run && selectedModelReady && licenseOk && audioPath && outputDir && !transcription.running && !modelBusy);
+  const startDisabledReason = (() => {
+    if (!licenseOk) return "Licence requise avant de lancer.";
+    if (!engine?.can_run) return engine?.message ?? "Backend incomplet.";
+    if (!selectedModelReady) return "Téléchargez le modèle sélectionné dans Réglages.";
+    if (!audioPath) return "Choisissez un fichier audio.";
+    if (!outputDir) return "Choisissez un dossier de sortie.";
+    if (transcription.running) return "Transcription déjà en cours.";
+    if (modelBusy) return "Téléchargement de modèle en cours.";
+    return "";
+  })();
 
   useEffect(() => {
     const boot = async () => {
@@ -147,9 +172,12 @@ function App() {
         setOutputDir(engineStatus.default_output_dir);
         setWorkDir(engineStatus.default_work_dir);
         hydrateLicense(licenseState);
-        await refreshHistory(engineStatus.default_output_dir);
+        await handleRefreshHistory(engineStatus.default_output_dir);
         const validation = await invoke<LicenseCheck>("validate_license", { forceOnline: false });
         applyLicenseCheck(validation);
+        if (validation.ok) {
+          setActiveStep(1);
+        }
       } catch (bootError) {
         setError(String(bootError));
       }
@@ -177,8 +205,8 @@ function App() {
 
   useEffect(() => {
     if (!audioPath || !outputDir) return;
-    void refreshOutputs(audioPath, outputDir);
-  }, [audioPath, outputDir, refreshOutputs]);
+    void handleRefreshOutputs(audioPath, outputDir);
+  }, [audioPath, outputDir, handleRefreshOutputs]);
 
   const refreshEngineAndModels = useCallback(async () => {
     const [engineStatus, modelState] = await Promise.all([
@@ -196,7 +224,6 @@ function App() {
     });
     if (typeof selected === "string") {
       setAudioPath(selected);
-      setActiveStep(2);
     }
   }
 
@@ -204,7 +231,7 @@ function App() {
     const selected = await openDialog({ directory: true, multiple: false });
     if (typeof selected === "string") {
       setOutputDir(selected);
-      await refreshHistory(selected);
+      await handleRefreshHistory(selected);
     }
   }
 
@@ -363,6 +390,7 @@ function App() {
           onChooseAudio={chooseAudio}
           onChooseOutputDir={chooseOutputDir}
           onRevealAudio={revealItemInDir}
+          onContinue={() => setActiveStep(2)}
         />
       );
     }
@@ -377,10 +405,14 @@ function App() {
           modelBusy={modelBusy}
           modelProgress={modelProgress}
           modelMessage={modelMessage}
+          selectedModelReady={selectedModelReady}
+          canStart={canStart}
+          startDisabledReason={startDisabledReason}
           onSettingsChange={setSettings}
           onDownloadModel={handleDownloadSelectedModel}
           onDeleteModels={handleDeleteModels}
           onOpenPath={openPath}
+          onStart={startTranscription}
         />
       );
     }
@@ -390,6 +422,7 @@ function App() {
         <ProgressScreen
           running={transcription.running}
           canStart={canStart}
+          disabledReason={startDisabledReason}
           stage={transcription.stage}
           progress={transcription.progress}
           elapsedSeconds={transcription.elapsedSeconds}
@@ -426,7 +459,7 @@ function App() {
           onUpdateSegment={updateSegment}
           onLoadHistoryRecord={(sourceAudio, dir) => {
             setAudioPath(sourceAudio);
-            void refreshOutputs(sourceAudio, dir);
+            void handleRefreshOutputs(sourceAudio, dir);
           }}
         />
       );
@@ -459,8 +492,8 @@ function App() {
         </div>
 
         <nav className="steps">
-          {navSteps.map((step, index) => {
-            const stepIndex = index + 1;
+          {steps.map((step, index) => {
+            const stepIndex = index;
             return (
               <button
                 key={step}

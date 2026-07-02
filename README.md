@@ -36,7 +36,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 
 ## Diarisation
 
-La version actuelle ne produit pas de diarisation. Les dossiers locaux ignorés par Git (`output/`, `work/`, `output-v2/`, `work-v2/`) peuvent contenir d'anciens essais `whisperx`, `speaker-turns` ou `speaker-segments`; ces fichiers sont des artefacts de développement hérités et ne font pas partie du contrat produit actuel.
+La version actuelle ne produit pas de diarisation. Les dossiers locaux ignorés par Git (`output/`, `Transcriptions/`, `work/`, `output-v2/`, `work-v2/`) peuvent contenir des sorties locales ou d'anciens essais `whisperx`, `speaker-turns` ou `speaker-segments`; ces fichiers sont des artefacts de développement hérités et ne font pas partie du contrat produit actuel.
 
 La roadmap proposée pour une future diarisation est documentée dans [docs/DIARIZATION_V2.md](docs/DIARIZATION_V2.md).
 
@@ -121,6 +121,16 @@ Modèles supportés:
 
 L'app télécharge le modèle choisi au premier usage et vérifie taille + SHA-256 avant installation.
 
+Emplacements par défaut des transcriptions:
+
+```text
+macOS    ~/Documents/Microwest Whisper/Transcriptions/
+Windows  %USERPROFILE%\Documents\Microwest Whisper\Transcriptions\
+Linux    ~/Documents/Microwest Whisper/Transcriptions/
+```
+
+Les fichiers temporaires sont placés par défaut dans le dossier `work/` voisin.
+
 Emplacements par défaut:
 
 ```text
@@ -132,7 +142,7 @@ Linux    ~/.local/share/microwest-whisper/models/
 Nettoyage:
 
 - Depuis l'app: bouton `Supprimer modèles`.
-- Windows NSIS: le désinstalleur supprime le dossier modèles.
+- Windows NSIS: le désinstalleur supprime le dossier modèles uniquement lors d'une désinstallation complète, pas pendant une mise à jour.
 - macOS drag-and-drop: il n'y a pas de hook système à la suppression de l'app; supprimer les modèles depuis l'app avant de jeter l'app.
 
 ## Build desktop
@@ -212,7 +222,7 @@ Payload:
 {
   "licenseKey": "MW-XXXXX-XXXXX-XXXXX-XXXXX",
   "machineId": "machine-id-local",
-  "appVersion": "0.2.3"
+  "appVersion": "0.2.4"
 }
 ```
 

@@ -18,11 +18,23 @@ export function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-export function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+export function Select({
+  label,
+  value,
+  options,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
   return (
     <label className="field">
       <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
           <option key={option} value={option}>
             {option}
@@ -34,10 +46,23 @@ export function Select({ label, value, options, onChange }: { label: string; val
 }
 
 export function NumberField({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
+  const clampValue = (rawValue: string) => {
+    if (rawValue.trim() === "") {
+      onChange(min);
+      return;
+    }
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+      onChange(min);
+      return;
+    }
+    onChange(Math.min(max, Math.max(min, Math.round(parsed))));
+  };
+
   return (
     <label className="field">
       <span>{label}</span>
-      <input type="number" value={value} min={min} max={max} onChange={(event) => onChange(Number(event.target.value))} />
+      <input type="number" value={value} min={min} max={max} onChange={(event) => clampValue(event.target.value)} />
     </label>
   );
 }

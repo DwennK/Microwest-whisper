@@ -1,5 +1,6 @@
 import { Check, FileAudio, RefreshCw, ShieldCheck, Sparkles, Loader2 } from "lucide-react";
 import { SectionTitle } from "../components/ui";
+import { formatDate } from "../lib/format";
 import type { LicenseSnapshot } from "../types";
 
 interface LicenseScreenProps {
@@ -70,16 +71,12 @@ export function LicenseScreen({
         <SectionTitle icon={<Sparkles size={20} />} title="Contrat licence" />
         <dl className="details">
           <div>
-            <dt>API</dt>
-            <dd>https://iaswiss.com/api/licenses</dd>
-          </div>
-          <div>
             <dt>Abonnement</dt>
             <dd>{String(license?.state?.subscription_status ?? "non vérifié")}</dd>
           </div>
           <div>
             <dt>Validité locale</dt>
-            <dd>{String(license?.state?.valid_until ?? "aucune")}</dd>
+            <dd>{formatDate(license?.state?.valid_until)}</dd>
           </div>
           <div>
             <dt>Etat local</dt>

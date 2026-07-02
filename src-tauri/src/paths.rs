@@ -19,12 +19,12 @@ pub struct OutputFile {
     pub exists: bool,
 }
 
-pub fn default_output_dir(engine_root: &Path) -> PathBuf {
-    engine_root.join("output-v2")
+pub fn default_output_dir(data_root: &Path) -> PathBuf {
+    data_root.join("Transcriptions")
 }
 
-pub fn default_work_dir(engine_root: &Path) -> PathBuf {
-    engine_root.join("work-v2")
+pub fn default_work_dir(data_root: &Path) -> PathBuf {
+    data_root.join("work")
 }
 
 pub fn expected_output_paths(audio: &Path, output_dir: &Path) -> Vec<OutputFile> {

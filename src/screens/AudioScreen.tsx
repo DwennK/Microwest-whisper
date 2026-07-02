@@ -10,9 +10,10 @@ interface AudioScreenProps {
   onChooseAudio: () => void;
   onChooseOutputDir: () => void;
   onRevealAudio: (path: string) => void;
+  onContinue: () => void;
 }
 
-export function AudioScreen({ audioPath, outputDir, engine, onChooseAudio, onChooseOutputDir, onRevealAudio }: AudioScreenProps) {
+export function AudioScreen({ audioPath, outputDir, engine, onChooseAudio, onChooseOutputDir, onRevealAudio, onContinue }: AudioScreenProps) {
   return (
     <section className="screen two-column">
       <div className="primary-panel">
@@ -44,6 +45,11 @@ export function AudioScreen({ audioPath, outputDir, engine, onChooseAudio, onCho
           <FolderOpen size={17} />
           Changer le dossier
         </button>
+        <div className="action-row">
+          <button className="primary" type="button" disabled={!audioPath || !outputDir} onClick={onContinue}>
+            Continuer
+          </button>
+        </div>
       </div>
     </section>
   );

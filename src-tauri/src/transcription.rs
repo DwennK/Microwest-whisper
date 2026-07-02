@@ -3,7 +3,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    env,
+    env, fmt,
     fs::{self, File},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -20,6 +20,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 const BACKEND_NAME: &str = "whisper.cpp";
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
+const CANCELLED_MESSAGE: &str = "Transcription annulée.";
 type EventSink = Arc<dyn Fn(&str, &str, &str, &str, u8) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Default)]
@@ -113,6 +114,37 @@ struct TranscriptionPaths {
     output_dir: PathBuf,
     work_dir: PathBuf,
     wav: PathBuf,
+}
+
+#[derive(Debug)]
+enum TranscriptionError {
+    Cancelled,
+    Failed(String),
+}
+
+impl fmt::Display for TranscriptionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TranscriptionError::Cancelled => formatter.write_str(CANCELLED_MESSAGE),
+            TranscriptionError::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for TranscriptionError {
+    fn from(message: String) -> Self {
+        if message == CANCELLED_MESSAGE {
+            TranscriptionError::Cancelled
+        } else {
+            TranscriptionError::Failed(message)
+        }
+    }
+}
+
+impl From<&str> for TranscriptionError {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -280,7 +312,13 @@ pub fn read_text_preview(path: String) -> Result<String, String> {
     }
     let mut content = fs::read_to_string(path).map_err(|error| error.to_string())?;
     if content.len() > 20_000 {
-        content.truncate(20_000);
+        let truncate_at = content
+            .char_indices()
+            .map(|(index, _)| index)
+            .take_while(|index| *index <= 20_000)
+            .last()
+            .unwrap_or(0);
+        content.truncate(truncate_at);
     }
     Ok(content)
 }
@@ -315,10 +353,7 @@ pub fn export_selected_segments(
 ) -> Result<Vec<paths::OutputFile>, String> {
     let audio = PathBuf::from(request.audio_path.trim());
     if !audio.exists() {
-        return Err(format!(
-            "Fichier audio introuvable: {}",
-            audio.to_string_lossy()
-        ));
+        return Err(format!("Fichier audio introuvable: {}", audio.to_string_lossy()).into());
     }
 
     let output_dir = PathBuf::from(request.output_dir.trim());
@@ -375,7 +410,14 @@ pub fn start_transcription(
         if let Err(error) =
             run_transcription(app.clone(), state_for_thread.clone(), request, status)
         {
-            let _ = emit_event(&app, "failed", "system", &error, "Echec", 0);
+            match error {
+                TranscriptionError::Cancelled => {
+                    let _ = emit_event(&app, "cancelled", "system", CANCELLED_MESSAGE, "Annulé", 0);
+                }
+                TranscriptionError::Failed(message) => {
+                    let _ = emit_event(&app, "failed", "system", &message, "Echec", 0);
+                }
+            }
         }
         let _ = set_running_direct(&state_for_thread, false);
         state_for_thread
@@ -391,6 +433,11 @@ pub fn cancel_transcription(
     app: AppHandle,
     state: State<TranscriptionState>,
 ) -> Result<CancelResponse, String> {
+    if let Ok(running) = state.running.lock() {
+        if !*running {
+            return Ok(CancelResponse { cancelled: false });
+        }
+    }
     state.cancel_requested.store(true, Ordering::SeqCst);
     let mut cancelled = false;
     if let Ok(mut active_child) = state.active_child.lock() {
@@ -399,14 +446,7 @@ pub fn cancel_transcription(
             cancelled = true;
         }
     }
-    emit_event(
-        &app,
-        "cancelled",
-        "system",
-        "Transcription annulée.",
-        "Annulé",
-        0,
-    )?;
+    emit_event(&app, "cancelled", "system", CANCELLED_MESSAGE, "Annulé", 0)?;
     Ok(CancelResponse { cancelled })
 }
 
@@ -415,7 +455,7 @@ fn run_transcription(
     state: TranscriptionState,
     request: TranscriptionRequest,
     status: EngineStatus,
-) -> Result<(), String> {
+) -> Result<(), TranscriptionError> {
     let events = tauri_event_sink(app.clone());
     run_transcription_inner(state, request, status, events)
 }
@@ -425,13 +465,10 @@ fn run_transcription_inner(
     request: TranscriptionRequest,
     status: EngineStatus,
     events: EventSink,
-) -> Result<(), String> {
+) -> Result<(), TranscriptionError> {
     let audio = PathBuf::from(request.audio_path.trim());
     if !audio.exists() {
-        return Err(format!(
-            "Fichier audio introuvable: {}",
-            audio.to_string_lossy()
-        ));
+        return Err(format!("Fichier audio introuvable: {}", audio.to_string_lossy()).into());
     }
 
     let output_dir = PathBuf::from(request.output_dir.trim());
@@ -451,7 +488,7 @@ fn run_transcription_inner(
         work_dir,
     };
 
-    let result = (|| {
+    let result: Result<(), TranscriptionError> = (|| {
         ensure_not_cancelled(&state)?;
         emit_event_to(
             &events,
@@ -468,7 +505,8 @@ fn run_transcription_inner(
             return Err(format!(
                 "Modèle requis introuvable: {}. Téléchargez le modèle dans Réglages ou déposez un fichier GGML/GGUF dans le dossier modèles.",
                 model_path.path.to_string_lossy()
-            ));
+            )
+            .into());
         }
 
         prepare_wav(&events, &state, &paths, &request, Path::new(&status.ffmpeg))?;
@@ -931,7 +969,7 @@ enum CommandKind {
 
 fn ensure_not_cancelled(state: &TranscriptionState) -> Result<(), String> {
     if state.cancel_requested.load(Ordering::SeqCst) {
-        Err("Transcription annulée.".to_string())
+        Err(CANCELLED_MESSAGE.to_string())
     } else {
         Ok(())
     }
@@ -1015,9 +1053,9 @@ fn stage_from_line(line: &str) -> (String, u8) {
         ("system_info", "Chargement modèle", 30),
         ("main: processing", "Transcription", 35),
         ("progress", "Transcription", 55),
-        ("output_json", "Ecriture des résultats", 90),
-        ("output_srt", "Ecriture des résultats", 90),
-        ("History updated", "Historique mis à jour", 98),
+        ("output_json", "Exports", 90),
+        ("output_srt", "Exports", 90),
+        ("History updated", "Exports", 98),
     ];
 
     for (needle, stage, progress) in mappings {
@@ -1200,16 +1238,41 @@ fn repo_candidates() -> Vec<PathBuf> {
 }
 
 fn default_data_root(engine_root: &Path) -> PathBuf {
+    if let Ok(path) = env::var("MICROWEST_DATA_DIR") {
+        return PathBuf::from(path);
+    }
+
     if engine_root.file_name().and_then(|value| value.to_str()) == Some("whispercpp") {
         if let Some(engine_dir) = engine_root.parent() {
             if engine_dir.file_name().and_then(|value| value.to_str()) == Some("engine") {
                 if let Some(repo_root) = engine_dir.parent() {
-                    return repo_root.to_path_buf();
+                    if repo_root.join("src-tauri").exists() {
+                        return repo_root.to_path_buf();
+                    }
                 }
             }
         }
     }
-    repo_root()
+
+    user_data_root()
+}
+
+fn user_data_root() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        return dirs_next::document_dir()
+            .or_else(|| {
+                env::var_os("USERPROFILE").map(|profile| PathBuf::from(profile).join("Documents"))
+            })
+            .or_else(|| dirs_next::home_dir().map(|home| home.join("Documents")))
+            .or_else(dirs_next::home_dir)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Microwest Whisper");
+    }
+
+    dirs_next::document_dir()
+        .or_else(|| dirs_next::home_dir().map(|home| home.join("Documents")))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Microwest Whisper")
 }
 
 fn find_whisper_cli(engine_root: &Path) -> ResolvedPath {
@@ -1412,7 +1475,7 @@ fn cleanup_temporary_wav(events: &EventSink, paths: &TranscriptionPaths) -> Resu
             "log",
             "system",
             "Fichiers temporaires nettoyés.",
-            "Nettoyage",
+            "Exports",
             99,
         )?;
     }

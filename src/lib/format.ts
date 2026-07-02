@@ -47,3 +47,14 @@ export function formatBytes(value: number) {
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
+
+export function formatDate(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return "aucune";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("fr-CH", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
