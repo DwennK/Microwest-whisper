@@ -31,7 +31,12 @@ for (const config of configs) {
 const command = process.platform === "win32" ? "npx.cmd" : "npx";
 const result = spawnSync(command, args, {
   env: process.env,
+  shell: process.platform === "win32",
   stdio: "inherit",
 });
+
+if (result.error) {
+  console.error(`Failed to start ${command}: ${result.error.message}`);
+}
 
 process.exit(result.status ?? 1);
