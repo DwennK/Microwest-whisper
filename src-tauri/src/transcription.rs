@@ -23,6 +23,13 @@ const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
 const CANCELLED_MESSAGE: &str = "Transcription annulée.";
 type EventSink = Arc<dyn Fn(&str, &str, &str, &str, u8) -> Result<(), String> + Send + Sync>;
 
+fn path_with_appended_extension(path: &Path, extension: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(".");
+    value.push(extension);
+    PathBuf::from(value)
+}
+
 #[derive(Clone, Default)]
 pub struct TranscriptionState {
     running: Arc<Mutex<bool>>,
@@ -655,8 +662,8 @@ fn run_whisper_cpp(
         "{}.whispercpp",
         paths::transcript_output_stem(&paths.audio)
     ));
-    let raw_json_path = output_base.with_extension("json");
-    let raw_srt_path = output_base.with_extension("srt");
+    let raw_json_path = path_with_appended_extension(&output_base, "json");
+    let raw_srt_path = path_with_appended_extension(&output_base, "srt");
 
     if request.force {
         let _ = fs::remove_file(&raw_json_path);
@@ -2125,8 +2132,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 printf 'progress = 50%%\n' >&2
-json_out="${out%.*}.json"
-srt_out="${out%.*}.srt"
+json_out="${out}.json"
+srt_out="${out}.srt"
 cat > "$json_out" <<'JSON'
 {
   "result": { "language": "fr" },
@@ -2193,6 +2200,9 @@ SRT
         run_transcription_inner(TranscriptionState::default(), request, status, events).unwrap();
 
         let stem = paths::transcript_output_stem(&audio);
+        assert!(work_dir.join(format!("{stem}.whispercpp.json")).exists());
+        assert!(work_dir.join(format!("{stem}.whispercpp.srt")).exists());
+
         let expected_suffixes = [
             ".transcript.txt",
             ".transcript.md",
