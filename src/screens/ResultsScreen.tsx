@@ -1,11 +1,11 @@
 import { useMemo, useRef, useState } from "react";
-import { Check, CircleStop, Clipboard, FileText, Save, Search, Subtitles } from "lucide-react";
+import { Check, CircleStop, Clipboard, FileText, PencilLine, Save, Search, Subtitles } from "lucide-react";
 import { SectionTitle } from "../components/ui";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { buildSrt, fileName, formatDuration, formatSegmentTimestamp } from "../lib/format";
 import type { HistoryRecord, OutputFile, TranscriptSegment } from "../types";
 
-const VIRTUAL_ROW_HEIGHT = 106;
+const VIRTUAL_ROW_HEIGHT = 132;
 const VIRTUAL_VIEWPORT_HEIGHT = 620;
 const VIRTUAL_OVERSCAN = 6;
 
@@ -18,12 +18,14 @@ interface ResultsScreenProps {
   selectedSegments: number[];
   selectedEditableSegments: TranscriptSegment[];
   selectedText: string;
+  hasSegmentEdits: boolean;
   history: HistoryRecord[];
   resultMessage: string;
   outputDir: string;
   onOpenPath: (path: string) => void;
   onCopyText: (text: string) => void;
   onExportSelection: () => void;
+  onSaveFullTranscript: () => void;
   onToggleSegment: (index: number) => void;
   onSetVisibleSegments: (indexes: number[], selected: boolean) => void;
   onUpdateSegment: (index: number, text: string) => void;
@@ -39,12 +41,14 @@ export function ResultsScreen({
   selectedSegments,
   selectedEditableSegments,
   selectedText,
+  hasSegmentEdits,
   history,
   resultMessage,
   outputDir,
   onOpenPath,
   onCopyText,
   onExportSelection,
+  onSaveFullTranscript,
   onToggleSegment,
   onSetVisibleSegments,
   onUpdateSegment,
@@ -70,6 +74,7 @@ export function ResultsScreen({
   const visibleCount = Math.ceil(VIRTUAL_VIEWPORT_HEIGHT / VIRTUAL_ROW_HEIGHT) + VIRTUAL_OVERSCAN * 2;
   const visibleRows = filteredSegments.slice(startIndex, startIndex + visibleCount);
   const visibleIndexes = useMemo(() => filteredSegments.map(({ index }) => index), [filteredSegments]);
+  const readyOutputs = useMemo(() => outputs.filter((item) => item.exists), [outputs]);
 
   function focusSegment(index: number) {
     setFocusedSegment(index);
@@ -80,6 +85,9 @@ export function ResultsScreen({
   }
 
   const copyPayload = previewMode === "srt" ? srtPreview : selectedText || preview;
+  const emptySegmentsMessage = segments.length === 0
+    ? "Aucun segment chargé pour ce fichier. Lancez une transcription ou ouvrez un résultat existant depuis l'historique."
+    : "Aucun segment ne correspond à cette recherche.";
 
   return (
     <section className="screen results-grid">
@@ -103,12 +111,20 @@ export function ResultsScreen({
           <strong>{selectedEditableSegments.length}</strong>
           <span>segment(s) sélectionné(s) sur {segments.length}</span>
         </div>
+        <div className={hasSegmentEdits ? "edit-state is-dirty" : "edit-state"}>
+          <PencilLine size={16} />
+          <span>
+            {hasSegmentEdits
+              ? "Modifications locales prêtes pour l'export sélection."
+              : "Les exports complets affichent la dernière transcription générée."}
+          </span>
+        </div>
         <div
           className="segment-list segment-virtual-list"
           ref={listRef}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         >
-          {filteredSegments.length === 0 && <p className="muted">Aucun segment disponible pour ce fichier.</p>}
+          {filteredSegments.length === 0 && <p className="muted empty-state">{emptySegmentsMessage}</p>}
           {filteredSegments.length > 0 && (
             <div className="segment-virtual-spacer" style={{ height: filteredSegments.length * VIRTUAL_ROW_HEIGHT }}>
               <div className="segment-virtual-stack" style={{ transform: `translateY(${startIndex * VIRTUAL_ROW_HEIGHT}px)` }}>
@@ -121,7 +137,11 @@ export function ResultsScreen({
                     <button className="timestamp-button" type="button" onClick={() => focusSegment(index)}>
                       {formatSegmentTimestamp(segment.start)}
                     </button>
-                    <textarea value={segment.text} onChange={(event) => onUpdateSegment(index, event.target.value)} />
+                    <textarea
+                      aria-label={`Texte du segment ${index + 1}`}
+                      value={segment.text}
+                      onChange={(event) => onUpdateSegment(index, event.target.value)}
+                    />
                   </article>
                 ))}
               </div>
@@ -132,6 +152,10 @@ export function ResultsScreen({
       <div className="secondary-panel">
         <SectionTitle icon={<FileText size={20} />} title="Exports complets" />
         <div className="output-list">
+          {outputs.length === 0 && <p className="muted empty-state">Sélectionnez un fichier audio pour afficher les exports attendus.</p>}
+          {outputs.length > 0 && readyOutputs.length === 0 && (
+            <p className="muted empty-state">Aucun export généré pour ce fichier dans le dossier de sortie actuel.</p>
+          )}
           {outputs.map((item) => (
             <div className={item.exists ? "output-row is-ready" : "output-row"} key={item.path}>
               <div>
@@ -146,7 +170,16 @@ export function ResultsScreen({
           ))}
         </div>
         <h2>Export sélection</h2>
+        <p className="selection-note">
+          {hasSegmentEdits
+            ? "L'export sélection utilisera les textes modifiés ci-contre."
+            : "Sélectionnez les segments à copier ou exporter."}
+        </p>
         <div className="selection-actions">
+          <button type="button" disabled={!hasSegmentEdits || segments.length === 0} onClick={onSaveFullTranscript}>
+            <Save size={16} />
+            Enregistrer exports complets
+          </button>
           <button className="primary" type="button" disabled={selectedEditableSegments.length === 0} onClick={onExportSelection}>
             <Save size={16} />
             Exporter sélection
@@ -169,7 +202,7 @@ export function ResultsScreen({
         )}
         <h2>Accès rapide</h2>
         <div className="quick-list">
-          {quickOutputs.length === 0 && <p className="muted">Aucun export prioritaire disponible.</p>}
+          {quickOutputs.length === 0 && <p className="muted empty-state">Aucun export prioritaire disponible pour ce fichier.</p>}
           {quickOutputs.map((item) => (
             <button key={item.path} type="button" disabled={!item.exists} onClick={() => onOpenPath(item.path)}>
               <FileText size={16} />
@@ -179,7 +212,7 @@ export function ResultsScreen({
         </div>
         <h2>Historique</h2>
         <div className="history-list">
-          {history.length === 0 && <p className="muted">Aucun historique dans ce dossier.</p>}
+          {history.length === 0 && <p className="muted empty-state">L'historique apparaîtra ici après une transcription réussie dans ce dossier.</p>}
           {history.slice(0, 6).map((record) => (
             <button key={`${record.created_at}-${record.stem}`} type="button" onClick={() => onLoadHistoryRecord(record.source_audio, outputDir)}>
               <span>{fileName(record.source_audio)}</span>

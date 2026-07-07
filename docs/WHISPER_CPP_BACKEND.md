@@ -21,14 +21,14 @@
   - `*.whispercpp.json`
 - `transcription-history.jsonl`
 - La licence IA Swiss reste geree par `src-tauri/src/license.rs`.
-- L'UI ne montre plus les options diarisation, pyannote, Hugging Face ou renommage locuteurs.
+- L'UI ne montre plus les options de diarisation ou de renommage locuteurs.
 - L'UI permet de supprimer les modèles téléchargés.
 
 ## Diarisation et artefacts herites
 
-Le backend `whisper.cpp` livre uniquement des segments horodates. Il ne genere pas de labels locuteur, de tours de parole, de fichiers `speaker-turns.*`, de fichiers `speaker-segments.srt` ou de sorties `whisperx.json`.
+Le backend `whisper.cpp` livre uniquement des segments horodates. Il ne genere pas de labels locuteur, de tours de parole ou de fichiers dedies aux locuteurs.
 
-Les dossiers `output/`, `Transcriptions/`, `work/`, `output-v2/` et `work-v2/` sont ignores par Git et peuvent contenir des resultats locaux ou d'anciens prototypes WhisperX/pyannote. Ces fichiers ne doivent pas etre utilises comme reference fonctionnelle pour la version actuelle. En app installee, les sorties par defaut sont creees dans le dossier Documents utilisateur, sous `Microwest Whisper/Transcriptions/`, et non dans les ressources de l'application.
+Les dossiers `output/`, `Transcriptions/`, `work/`, `output-v2/` et `work-v2/` sont ignores par Git et peuvent contenir des resultats locaux ou d'anciens prototypes de segmentation locuteur. Ces fichiers ne doivent pas etre utilises comme reference fonctionnelle pour la version actuelle. En app installee, les sorties par defaut sont creees dans le dossier Documents utilisateur, sous `Microwest Whisper/Transcriptions/`, et non dans les ressources de l'application.
 
 Toute reintroduction de diarisation doit passer par une version separee, decrite dans `docs/DIARIZATION_V2.md`, avec un contrat d'exports et des tests dedies.
 

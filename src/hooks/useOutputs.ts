@@ -13,6 +13,7 @@ export function useOutputs() {
   const [selectedSegments, setSelectedSegments] = useState<number[]>([]);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [resultMessage, setResultMessage] = useState("");
+  const [hasSegmentEdits, setHasSegmentEdits] = useState(false);
 
   const selectedEditableSegments = useMemo(
     () => selectedSegments.map((index) => segments[index]).filter(Boolean),
@@ -52,10 +53,12 @@ export function useOutputs() {
     setSegments(loadedSegments);
     setSelectedSegments(loadedSegments.map((_, index) => index));
     setSelectionOutputs([]);
+    setHasSegmentEdits(false);
   }, [audioPath, outputDir]);
 
   const updateSegment = useCallback((index: number, text: string) => {
     setSegments((current) => current.map((segment, itemIndex) => (itemIndex === index ? { ...segment, text } : segment)));
+    setHasSegmentEdits(true);
   }, []);
 
   const toggleSegment = useCallback((index: number) => {
@@ -86,6 +89,26 @@ export function useOutputs() {
     setResultMessage(`${files.length} export(s) de sélection généré(s).`);
   }, [audioPath, outputDir, selectedEditableSegments]);
 
+  const saveTranscriptEdits = useCallback(async () => {
+    if (!audioPath || !outputDir || segments.length === 0) return;
+    setResultMessage("");
+    const files = await invoke<OutputFile[]>("save_transcript_edits", {
+      request: {
+        audio_path: audioPath,
+        output_dir: outputDir,
+        segments,
+      },
+    });
+    setOutputs(files);
+    const previewFile = files.find((item) => item.exists && item.path.endsWith(".transcript.md")) ?? files.find((item) => item.exists && item.path.endsWith(".clean.txt"));
+    if (previewFile) {
+      setPreview(await invoke<string>("read_text_preview", { path: previewFile.path }));
+    }
+    setSelectionOutputs([]);
+    setHasSegmentEdits(false);
+    setResultMessage("Exports complets mis à jour.");
+  }, [audioPath, outputDir, segments]);
+
   return {
     audioPath,
     setAudioPath,
@@ -101,6 +124,7 @@ export function useOutputs() {
     selectedSegments,
     selectedEditableSegments,
     selectedText,
+    hasSegmentEdits,
     history,
     resultMessage,
     setResultMessage,
@@ -110,5 +134,6 @@ export function useOutputs() {
     toggleSegment,
     setAllSegments,
     exportSelectedSegments,
+    saveTranscriptEdits,
   };
 }

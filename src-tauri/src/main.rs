@@ -24,6 +24,7 @@ fn main() {
             transcription::read_text_preview,
             transcription::read_transcript_segments,
             transcription::export_selected_segments,
+            transcription::save_transcript_edits,
             transcription::start_transcription,
             transcription::cancel_transcription,
         ])

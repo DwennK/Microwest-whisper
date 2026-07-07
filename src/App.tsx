@@ -102,6 +102,7 @@ function App() {
     selectedSegments,
     selectedEditableSegments,
     selectedText,
+    hasSegmentEdits,
     history,
     resultMessage,
     setResultMessage,
@@ -111,6 +112,7 @@ function App() {
     toggleSegment,
     setAllSegments,
     exportSelectedSegments,
+    saveTranscriptEdits,
   } = useOutputs();
 
   const handleTranscriptionStarted = useCallback(() => {
@@ -364,6 +366,15 @@ function App() {
     }
   }
 
+  async function handleSaveTranscriptEdits() {
+    setError("");
+    try {
+      await saveTranscriptEdits();
+    } catch (saveError) {
+      setError(String(saveError));
+    }
+  }
+
   const activeScreen = (() => {
     if (activeStep === 0) {
       return (
@@ -448,12 +459,14 @@ function App() {
           selectedSegments={selectedSegments}
           selectedEditableSegments={selectedEditableSegments}
           selectedText={selectedText}
+          hasSegmentEdits={hasSegmentEdits}
           history={history}
           resultMessage={resultMessage}
           outputDir={outputDir}
           onOpenPath={openPath}
           onCopyText={copyText}
           onExportSelection={handleExportSelectedSegments}
+          onSaveFullTranscript={handleSaveTranscriptEdits}
           onToggleSegment={toggleSegment}
           onSetVisibleSegments={setAllSegments}
           onUpdateSegment={updateSegment}

@@ -2,7 +2,7 @@
 
 Microwest Whisper est une application desktop Tauri/React qui transcrit des fichiers audio localement avec un backend natif `whisper.cpp`.
 
-L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à installer Python, FFmpeg, Node, Whisper ou un token Hugging Face.
+L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à installer Python, FFmpeg, Node, Whisper ou un token externe.
 
 ## Etat actuel
 
@@ -10,7 +10,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Backend natif Rust qui lance `whisper-cli`.
 - Conversion audio via FFmpeg vers WAV PCM 16 kHz mono.
 - Modèles Whisper GGML téléchargés à la demande, hors Git.
-- Pas de diarisation, pas de pyannote, pas de labels locuteur dans la version actuelle.
+- Pas de diarisation ni de labels locuteur dans la version actuelle.
 - Licence IA Swiss conservée.
 - Auto-update manuel via GitHub Releases.
 - Checksums SHA-256 publiés comme asset et dans les notes GitHub Releases.
@@ -36,7 +36,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 
 ## Diarisation
 
-La version actuelle ne produit pas de diarisation. Les dossiers locaux ignorés par Git (`output/`, `Transcriptions/`, `work/`, `output-v2/`, `work-v2/`) peuvent contenir des sorties locales ou d'anciens essais `whisperx`, `speaker-turns` ou `speaker-segments`; ces fichiers sont des artefacts de développement hérités et ne font pas partie du contrat produit actuel.
+La version actuelle ne produit pas de diarisation. Les dossiers locaux ignorés par Git (`output/`, `Transcriptions/`, `work/`, `output-v2/`, `work-v2/`) peuvent contenir des sorties locales ou d'anciens essais de segmentation locuteur; ces fichiers sont des artefacts de développement hérités et ne font pas partie du contrat produit actuel.
 
 La roadmap proposée pour une future diarisation est documentée dans [docs/DIARIZATION_V2.md](docs/DIARIZATION_V2.md).
 

@@ -1,10 +1,11 @@
+mod exports;
+
 use crate::{license, model_assets, paths};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    env, fmt,
-    fs::{self, File},
+    env, fmt, fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -16,7 +17,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 const BACKEND_NAME: &str = "whisper.cpp";
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
@@ -167,6 +167,13 @@ pub struct SelectionExportRequest {
     output_dir: String,
     segments: Vec<TranscriptSegment>,
     formats: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TranscriptEditSaveRequest {
+    audio_path: String,
+    output_dir: String,
+    segments: Vec<TranscriptSegment>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -380,7 +387,60 @@ pub fn export_selected_segments(
         return Err("Aucun segment sélectionné à exporter.".to_string());
     }
 
-    write_selection_outputs(&audio, &output_dir, segments, &request.formats)
+    exports::write_selection_outputs(
+        &audio,
+        &output_dir,
+        segments,
+        &request.formats,
+        BACKEND_NAME,
+    )
+}
+
+#[tauri::command]
+pub fn save_transcript_edits(
+    request: TranscriptEditSaveRequest,
+) -> Result<Vec<paths::OutputFile>, String> {
+    let audio = PathBuf::from(request.audio_path.trim());
+    if !audio.exists() {
+        return Err(format!(
+            "Fichier audio introuvable: {}",
+            audio.to_string_lossy()
+        ));
+    }
+
+    let output_dir = PathBuf::from(request.output_dir.trim());
+    fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
+
+    let segments = request
+        .segments
+        .into_iter()
+        .filter(|segment| !segment.text.trim().is_empty())
+        .map(|mut segment| {
+            segment.text = clean_text(&segment.text);
+            segment
+        })
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        return Err("Aucun segment à enregistrer.".to_string());
+    }
+
+    let stem = paths::transcript_output_stem(&audio);
+    let segments_path = output_dir.join(format!("{stem}.segments.json"));
+    if !segments_path.exists() {
+        return Err(format!(
+            "Segments source introuvables: {}",
+            segments_path.to_string_lossy()
+        ));
+    }
+
+    let content = fs::read_to_string(&segments_path).map_err(|error| error.to_string())?;
+    let transcript =
+        serde_json::from_str::<NativeTranscript>(&content).map_err(|error| error.to_string())?;
+    let transcript = exports::refreshed_transcript(transcript, segments);
+    exports::write_outputs(&audio, &output_dir, &transcript)?;
+
+    Ok(paths::expected_output_paths(&audio, &output_dir))
 }
 
 #[tauri::command]
@@ -535,7 +595,7 @@ fn run_transcription_inner(
             "Exports",
             92,
         )?;
-        let outputs = write_outputs(&paths, &transcript)?;
+        let outputs = exports::write_outputs(&paths.audio, &paths.output_dir, &transcript)?;
         append_history(
             &paths,
             &request,
@@ -740,117 +800,6 @@ fn run_whisper_cpp(
     transcript.text = transcript_text(&transcript.segments);
     transcript.duration_seconds = transcript.segments.last().map(|segment| segment.end);
     Ok(transcript)
-}
-
-fn write_outputs(
-    paths: &TranscriptionPaths,
-    transcript: &NativeTranscript,
-) -> Result<Vec<PathBuf>, String> {
-    let stem = paths::transcript_output_stem(&paths.audio);
-    let txt = paths.output_dir.join(format!("{stem}.transcript.txt"));
-    let md = paths.output_dir.join(format!("{stem}.transcript.md"));
-    let clean_txt = paths.output_dir.join(format!("{stem}.clean.txt"));
-    let srt = paths.output_dir.join(format!("{stem}.segments.srt"));
-    let segments_json = paths.output_dir.join(format!("{stem}.segments.json"));
-    let docx = paths.output_dir.join(format!("{stem}.transcript.docx"));
-    let raw_json = paths.output_dir.join(format!("{stem}.whispercpp.json"));
-
-    write_timestamped_txt(&txt, &transcript.segments)?;
-    write_markdown(&md, transcript, &paths.audio)?;
-    write_clean_txt(&clean_txt, transcript)?;
-    write_srt(&srt, &transcript.segments)?;
-    write_segments_json(&segments_json, transcript)?;
-    write_docx(&docx, transcript, &paths.audio)?;
-    fs::write(
-        &raw_json,
-        serde_json::to_string_pretty(transcript).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-
-    let outputs = vec![txt, md, clean_txt, srt, segments_json, docx, raw_json];
-    println_outputs(&outputs);
-    Ok(outputs)
-}
-
-fn write_selection_outputs(
-    audio: &Path,
-    output_dir: &Path,
-    segments: Vec<TranscriptSegment>,
-    requested_formats: &[String],
-) -> Result<Vec<paths::OutputFile>, String> {
-    let stem = paths::transcript_output_stem(audio);
-    let transcript = NativeTranscript {
-        backend: BACKEND_NAME.to_string(),
-        model: "selection".to_string(),
-        model_path: String::new(),
-        language: String::new(),
-        source_audio: audio.to_string_lossy().to_string(),
-        preprocessed_wav: String::new(),
-        duration_seconds: segments.last().map(|segment| segment.end),
-        text: transcript_text(&segments),
-        segments,
-    };
-
-    let formats = if requested_formats.is_empty() {
-        vec![
-            "markdown".to_string(),
-            "txt".to_string(),
-            "srt".to_string(),
-            "json".to_string(),
-            "docx".to_string(),
-        ]
-    } else {
-        requested_formats
-            .iter()
-            .map(|format| format.trim().to_ascii_lowercase())
-            .collect()
-    };
-
-    let mut outputs = Vec::new();
-    for format in formats {
-        match format.as_str() {
-            "markdown" | "md" => {
-                let path = output_dir.join(format!("{stem}.selection.md"));
-                write_markdown(&path, &transcript, audio)?;
-                outputs.push(output_file("Sélection Markdown", &path));
-            }
-            "txt" | "text" => {
-                let path = output_dir.join(format!("{stem}.selection.txt"));
-                write_clean_txt(&path, &transcript)?;
-                outputs.push(output_file("Sélection TXT", &path));
-            }
-            "srt" => {
-                let path = output_dir.join(format!("{stem}.selection.srt"));
-                write_srt(&path, &transcript.segments)?;
-                outputs.push(output_file("Sélection SRT", &path));
-            }
-            "json" => {
-                let path = output_dir.join(format!("{stem}.selection.json"));
-                write_segments_json(&path, &transcript)?;
-                outputs.push(output_file("Sélection JSON", &path));
-            }
-            "docx" => {
-                let path = output_dir.join(format!("{stem}.selection.docx"));
-                write_docx(&path, &transcript, audio)?;
-                outputs.push(output_file("Sélection DOCX", &path));
-            }
-            _ => {}
-        }
-    }
-
-    if outputs.is_empty() {
-        return Err("Aucun format d'export sélectionné valide.".to_string());
-    }
-
-    Ok(outputs)
-}
-
-fn output_file(label: &str, path: &Path) -> paths::OutputFile {
-    paths::OutputFile {
-        label: label.to_string(),
-        path: path.to_string_lossy().to_string(),
-        exists: path.exists(),
-    }
 }
 
 fn append_history(
@@ -1699,220 +1648,6 @@ fn transcript_text(segments: &[TranscriptSegment]) -> String {
         .join("\n\n")
 }
 
-fn format_ts(seconds: f64, sep: &str) -> String {
-    let milliseconds = (seconds.max(0.0) * 1000.0).round() as u64;
-    let hours = milliseconds / 3_600_000;
-    let minutes = (milliseconds % 3_600_000) / 60_000;
-    let secs = (milliseconds % 60_000) / 1000;
-    let millis = milliseconds % 1000;
-    format!("{hours:02}:{minutes:02}:{secs:02}{sep}{millis:03}")
-}
-
-fn write_timestamped_txt(path: &Path, segments: &[TranscriptSegment]) -> Result<(), String> {
-    let mut content = String::new();
-    for segment in segments {
-        content.push_str(&format!(
-            "[{} - {}] {}\n\n",
-            format_ts(segment.start, "."),
-            format_ts(segment.end, "."),
-            segment.text
-        ));
-    }
-    fs::write(path, content).map_err(|error| error.to_string())
-}
-
-fn write_markdown(path: &Path, transcript: &NativeTranscript, source: &Path) -> Result<(), String> {
-    let mut content = format!(
-        "# Transcription\n\nSource: `{}`\n\nBackend: `{}`\n\nModèle: `{}`\n\n",
-        source
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("audio"),
-        transcript.backend,
-        transcript.model,
-    );
-    for segment in &transcript.segments {
-        content.push_str(&format!(
-            "`{} - {}`\n\n{}\n\n",
-            format_ts(segment.start, "."),
-            format_ts(segment.end, "."),
-            segment.text
-        ));
-    }
-    fs::write(path, content).map_err(|error| error.to_string())
-}
-
-fn write_clean_txt(path: &Path, transcript: &NativeTranscript) -> Result<(), String> {
-    fs::write(path, transcript.text.trim()).map_err(|error| error.to_string())
-}
-
-fn write_srt(path: &Path, segments: &[TranscriptSegment]) -> Result<(), String> {
-    let mut content = String::new();
-    for (index, segment) in segments.iter().enumerate() {
-        content.push_str(&format!(
-            "{}\n{} --> {}\n{}\n\n",
-            index + 1,
-            format_ts(segment.start, ","),
-            format_ts(segment.end, ","),
-            segment.text
-        ));
-    }
-    fs::write(path, content).map_err(|error| error.to_string())
-}
-
-fn write_segments_json(path: &Path, transcript: &NativeTranscript) -> Result<(), String> {
-    fs::write(
-        path,
-        serde_json::to_string_pretty(transcript).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
-}
-
-fn write_docx(path: &Path, transcript: &NativeTranscript, source: &Path) -> Result<(), String> {
-    let file = File::create(path).map_err(|error| error.to_string())?;
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-
-    zip.start_file("[Content_Types].xml", options)
-        .map_err(|error| error.to_string())?;
-    zip.write_all(content_types_xml().as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    zip.start_file("_rels/.rels", options)
-        .map_err(|error| error.to_string())?;
-    zip.write_all(root_rels_xml().as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    zip.start_file("docProps/app.xml", options)
-        .map_err(|error| error.to_string())?;
-    zip.write_all(app_props_xml().as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    zip.start_file("docProps/core.xml", options)
-        .map_err(|error| error.to_string())?;
-    zip.write_all(core_props_xml().as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    zip.start_file("word/document.xml", options)
-        .map_err(|error| error.to_string())?;
-    zip.write_all(document_xml(transcript, source).as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    zip.finish().map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn content_types_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
-  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
-</Types>"#
-}
-
-fn root_rels_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
-</Relationships>"#
-}
-
-fn app_props_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
-  <Application>Microwest Whisper</Application>
-</Properties>"#
-}
-
-fn core_props_xml() -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:title>Transcription</dc:title>
-  <dc:creator>Microwest Whisper</dc:creator>
-  <cp:lastModifiedBy>Microwest Whisper</cp:lastModifiedBy>
-  <dcterms:created xsi:type="dcterms:W3CDTF">{}</dcterms:created>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">{}</dcterms:modified>
-</cp:coreProperties>"#,
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
-    )
-}
-
-fn document_xml(transcript: &NativeTranscript, source: &Path) -> String {
-    let mut body = String::new();
-    body.push_str(&docx_paragraph("Transcription", true));
-    body.push_str(&docx_paragraph(
-        &format!(
-            "Source: {}",
-            source
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("audio")
-        ),
-        false,
-    ));
-    body.push_str(&docx_paragraph(
-        &format!(
-            "Backend: {} | Modèle: {}",
-            transcript.backend, transcript.model
-        ),
-        false,
-    ));
-    for segment in &transcript.segments {
-        body.push_str(&docx_paragraph(
-            &format!(
-                "{} - {}",
-                format_ts(segment.start, "."),
-                format_ts(segment.end, ".")
-            ),
-            true,
-        ));
-        body.push_str(&docx_paragraph(&segment.text, false));
-    }
-
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    {}
-    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
-  </w:body>
-</w:document>"#,
-        body
-    )
-}
-
-fn docx_paragraph(text: &str, bold: bool) -> String {
-    let run_props = if bold { "<w:rPr><w:b/></w:rPr>" } else { "" };
-    format!(
-        "<w:p><w:r>{run_props}<w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
-        xml_escape(text)
-    )
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-fn println_outputs(outputs: &[PathBuf]) {
-    println!();
-    println!("Done. Files written:");
-    for path in outputs {
-        println!("- {}", path.to_string_lossy());
-    }
-}
-
 fn set_running(state: &State<TranscriptionState>, value: bool) -> Result<(), String> {
     set_running_direct(state.inner(), value)
 }
@@ -1995,7 +1730,7 @@ mod tests {
             ],
         };
 
-        let outputs = write_outputs(&paths, &transcript).unwrap();
+        let outputs = exports::write_outputs(&paths.audio, &paths.output_dir, &transcript).unwrap();
 
         assert_eq!(outputs.len(), 7);
         assert!(outputs
@@ -2058,7 +1793,7 @@ mod tests {
         let audio = root.join("meeting.wav");
         fs::write(&audio, b"audio").unwrap();
 
-        let outputs = write_selection_outputs(
+        let outputs = exports::write_selection_outputs(
             &audio,
             &output_dir,
             vec![TranscriptSegment {
@@ -2073,6 +1808,7 @@ mod tests {
                 "json".to_string(),
                 "docx".to_string(),
             ],
+            BACKEND_NAME,
         )
         .unwrap();
 
@@ -2088,6 +1824,107 @@ mod tests {
         let srt_content = fs::read_to_string(&srt.path).unwrap();
         assert!(srt_content.contains("00:00:04,000 --> 00:00:06,500"));
         assert!(srt_content.contains("Segment choisi"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn docx_document_xml_escapes_transcript_content() {
+        let transcript = NativeTranscript {
+            backend: BACKEND_NAME.to_string(),
+            model: "large-v3-turbo-q8_0".to_string(),
+            model_path: "/models/model.bin".to_string(),
+            language: "fr".to_string(),
+            source_audio: "/audio/meeting.wav".to_string(),
+            preprocessed_wav: String::new(),
+            duration_seconds: Some(1.0),
+            text: "R&D <test> \"quote\" 'apostrophe'".to_string(),
+            segments: vec![TranscriptSegment {
+                start: 0.0,
+                end: 1.0,
+                text: "R&D <test> \"quote\" 'apostrophe'".to_string(),
+            }],
+        };
+
+        let xml = exports::document_xml(&transcript, Path::new("/audio/meeting.wav"));
+
+        assert!(xml.contains("R&amp;D &lt;test&gt; &quot;quote&quot; &apos;apostrophe&apos;"));
+        assert!(!xml.contains("R&D <test>"));
+    }
+
+    #[test]
+    fn save_transcript_edits_rewrites_full_exports() {
+        let root = env::temp_dir().join(format!(
+            "microwest-save-edits-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let output_dir = root.join("out");
+        let audio = root.join("meeting.wav");
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::write(&audio, b"audio").unwrap();
+
+        let transcript = NativeTranscript {
+            backend: BACKEND_NAME.to_string(),
+            model: "large-v3-turbo-q8_0".to_string(),
+            model_path: "/models/model.bin".to_string(),
+            language: "fr".to_string(),
+            source_audio: audio.to_string_lossy().to_string(),
+            preprocessed_wav: String::new(),
+            duration_seconds: Some(2.0),
+            text: "Texte original".to_string(),
+            segments: vec![TranscriptSegment {
+                start: 0.0,
+                end: 2.0,
+                text: "Texte original".to_string(),
+            }],
+        };
+        exports::write_outputs(&audio, &output_dir, &transcript).unwrap();
+
+        let outputs = save_transcript_edits(TranscriptEditSaveRequest {
+            audio_path: audio.to_string_lossy().to_string(),
+            output_dir: output_dir.to_string_lossy().to_string(),
+            segments: vec![TranscriptSegment {
+                start: 0.0,
+                end: 2.0,
+                text: " Texte   corrigé ".to_string(),
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(outputs.len(), 7);
+        let stem = paths::transcript_output_stem(&audio);
+        let clean_text = fs::read_to_string(output_dir.join(format!("{stem}.clean.txt"))).unwrap();
+        let markdown =
+            fs::read_to_string(output_dir.join(format!("{stem}.transcript.md"))).unwrap();
+        let segments_json =
+            fs::read_to_string(output_dir.join(format!("{stem}.segments.json"))).unwrap();
+
+        assert_eq!(clean_text, "Texte corrigé");
+        assert!(markdown.contains("Texte corrigé"));
+        assert!(segments_json.contains("Texte corrigé"));
+        assert!(!segments_json.contains("Texte original"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_history_ignores_malformed_jsonl_records() {
+        let root = env::temp_dir().join(format!("microwest-history-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("transcription-history.jsonl"),
+            r#"{"created_at":"2026-01-01T10:00:00Z","status":"success","source_audio":"/audio/meeting.wav","stem":"meeting","duration_seconds":12.5,"language":"fr","model":"large-v3-turbo-q8_0","diarization":false,"outputs":["/out/meeting.transcript.md"]}
+not-json
+"#,
+        )
+        .unwrap();
+
+        let records = read_history(root.to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "success");
+        assert_eq!(records[0].source_audio, "/audio/meeting.wav");
+        assert_eq!(records[0].outputs, vec!["/out/meeting.transcript.md"]);
 
         let _ = fs::remove_dir_all(root);
     }

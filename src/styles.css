@@ -717,6 +717,36 @@ select:focus {
   font-size: 20px;
 }
 
+.edit-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 12px;
+  border: 1px solid #d9e1e7;
+  border-radius: 7px;
+  padding: 10px 12px;
+  color: #60717d;
+  background: #f8fbfc;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.edit-state svg {
+  flex: 0 0 auto;
+  color: #1c5d78;
+}
+
+.edit-state.is-dirty {
+  border-color: rgba(47, 156, 104, 0.45);
+  color: #1d5d3e;
+  background: #f2fbf6;
+}
+
+.empty-state {
+  margin: 0;
+}
+
 .segment-list {
   max-height: 620px;
   overflow: auto;
@@ -804,11 +834,12 @@ select:focus {
 }
 
 .segment-virtual-list .segment-row {
-  min-height: 96px;
+  min-height: 122px;
 }
 
 .segment-virtual-list .segment-row textarea {
-  height: 66px;
+  height: 92px;
+  overflow: auto;
   resize: none;
 }
 
@@ -853,6 +884,13 @@ select:focus {
   flex-wrap: wrap;
   gap: 10px;
   margin: 12px 0;
+}
+
+.selection-note {
+  margin: 8px 0 0;
+  color: #60717d;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .selection-output-list {
