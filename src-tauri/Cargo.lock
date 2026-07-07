@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "microwest-whisper"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "chrono",
  "dirs-next",
