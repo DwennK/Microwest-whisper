@@ -53,6 +53,8 @@ mkdirSync(targetBinDir, { recursive: true });
 mkdirSync(targetModelsDir, { recursive: true });
 
 copyOptional(join(sourceRoot, "README.md"), join(targetRoot, "README.md"));
+copyOptional(join(sourceRoot, "THIRD_PARTY_NOTICES.md"), join(targetRoot, "THIRD_PARTY_NOTICES.md"));
+copyOptional(join(repoRoot, "scripts", "native-dependencies.json"), join(targetRoot, "native-dependencies.json"));
 copyOptional(join(sourceRoot, "models", ".gitkeep"), join(targetModelsDir, ".gitkeep"));
 copyDirectoryFiles(sourceBinDir, targetBinDir);
 

@@ -61,7 +61,8 @@ Pour développer l'app, il faut installer localement:
 
 - Node.js + npm;
 - Rust + Cargo;
-- Python 3 pour le script de récupération des binaires natifs.
+- Python 3 pour le script de récupération des binaires natifs;
+- CMake pour compiler la source `whisper.cpp` épinglée sur macOS.
 
 L'utilisateur final n'a pas besoin de ces outils.
 
@@ -199,13 +200,13 @@ Secrets GitHub nécessaires:
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` si la clé est protégée par mot de passe.
 
-Secrets optionnels pour distribution commerciale signée:
+Secrets requis pour toute release taguée distribuable:
 
 - macOS/notarisation: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, puis `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID` ou `APPLE_API_KEY` + `APPLE_API_ISSUER`.
 - Windows: `WINDOWS_CERTIFICATE_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_CERTIFICATE_THUMBPRINT`.
 - Variables Windows optionnelles: `WINDOWS_DIGEST_ALGORITHM`, `WINDOWS_TIMESTAMP_URL`.
 
-Sans ces secrets, les builds restent publiables pour test mais les installateurs OS ne sont pas signés/notarisés.
+Avec App Store Connect, le contenu de la clé privée `.p8` est fourni dans `APPLE_API_KEY_PRIVATE`; le workflow crée le fichier temporaire attendu par Tauri. Les builds ordinaires de `main` peuvent rester non signés pour validation, mais un tag `v*` échoue avant compilation si la signature updater, la signature OS ou la notarisation requise est absente.
 
 Voir [docs/UPDATER.md](docs/UPDATER.md).
 
@@ -224,7 +225,7 @@ Payload:
 {
   "licenseKey": "MW-XXXXX-XXXXX-XXXXX-XXXXX",
   "machineId": "machine-id-local",
-  "appVersion": "0.2.4"
+  "appVersion": "0.2.6"
 }
 ```
 
@@ -240,10 +241,14 @@ export MICROWEST_LICENSE_STATE=/tmp/microwest-license.json
 ## Tests
 
 ```bash
+npm test
 npm run build:frontend
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
+npm run verify:native-manifest
 ```
+
+Les versions, URLs, SHA-256 et licences des archives `whisper.cpp` et imageio-ffmpeg sont verrouillés dans `scripts/native-dependencies.json`. Le téléchargement vérifie chaque hash avant extraction. Les notices sont intégrées aux ressources packagées via `engine/whispercpp/THIRD_PARTY_NOTICES.md` et la configuration de licence FFmpeg est archivée dans `FFMPEG_BUILD.txt` pour chaque plateforme.
 
 ## Documentation
 
@@ -254,9 +259,8 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 Avant une distribution commerciale complète:
 
-- configurer les secrets Apple Developer pour signer et notariser macOS;
-- configurer un certificat de signature Windows pour réduire les alertes SmartScreen/antivirus;
+- configurer les secrets Apple Developer et le certificat Windows exigés par le preflight de release;
 - valider les bundles Linux AppImage/deb/rpm sur distributions cibles;
-- vérifier la licence de redistribution FFmpeg selon les binaires utilisés.
+- faire valider les obligations GPL et codecs transitifs listées dans les notices FFmpeg.
 
 L'app expose aussi un écran `À propos` avec version, backend, modèle, plateforme, licence, endpoint updater et chemins locaux.

@@ -15,13 +15,15 @@ Le workflow de release attend ces secrets:
 - `TAURI_SIGNING_PRIVATE_KEY`: contenu de la cle privee Tauri.
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: optionnel; absent ou vide pour la cle actuelle.
 
+Toute release taguée exige la signature updater et les signatures OS. Le workflow arrête le build avant publication si un secret obligatoire manque.
+
 Pour signer et notariser les bundles macOS, ajouter les secrets Apple Developer reconnus par Tauri:
 
 - `APPLE_CERTIFICATE`: certificat `.p12` encode en base64.
 - `APPLE_CERTIFICATE_PASSWORD`: mot de passe du `.p12`.
-- `APPLE_SIGNING_IDENTITY`: optionnel si Tauri peut l'inferer depuis le certificat.
+- `APPLE_SIGNING_IDENTITY`: identité de signature exigée par le preflight de release.
 - `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`: notarisation avec Apple ID.
-- ou `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`: notarisation avec cle App Store Connect.
+- ou `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PRIVATE`: notarisation avec cle App Store Connect; le workflow écrit la clé `.p8` dans un fichier temporaire et définit `APPLE_API_KEY_PATH`.
 
 Pour signer les installateurs Windows dans GitHub Actions:
 
@@ -31,7 +33,7 @@ Pour signer les installateurs Windows dans GitHub Actions:
 - `WINDOWS_DIGEST_ALGORITHM`: optionnel, `sha256` par defaut.
 - `WINDOWS_TIMESTAMP_URL`: optionnel, `http://timestamp.digicert.com` par defaut.
 
-Si les secrets Apple ou Windows sont absents, le workflow continue mais les bundles OS correspondants restent non signes/non notarises. Les signatures Tauri updater restent distinctes et continuent d'etre produites avec `TAURI_SIGNING_PRIVATE_KEY`.
+Les pushes ordinaires sur `main` peuvent produire des bundles de validation non signés. En revanche, un tag `v*` ne peut plus publier de bundles macOS ou Windows non signés/non notariés. Les signatures Tauri updater restent distinctes et utilisent `TAURI_SIGNING_PRIVATE_KEY`.
 
 La cle privee locale generee pendant la mise en place est ignoree par Git:
 
@@ -71,3 +73,4 @@ Sur Windows, Tauri quitte l'application au moment de l'installation de l'update,
 - Le manifeste macOS utilise `darwin-aarch64` par defaut pour les artefacts `.app.tar.gz` sans architecture dans le nom. Ajouter un build Intel/universal demandera d'ajuster la matrice macOS et `MACOS_UPDATER_TARGET`.
 - Les checksums SHA-256 sont publies dans les notes et dans `SHA256SUMS.txt` pour verification manuelle des artefacts, mais l'auto-update Tauri repose sur les signatures `.sig`.
 - La signature Windows utilise une configuration locale generee pendant `npm run build:release`; le fichier `src-tauri/tauri.windows-signing.local.json` est ignore par Git.
+- Les archives natives sont verrouillées par URL et SHA-256 dans `scripts/native-dependencies.json`; leurs notices sont incluses dans les ressources de l'application.

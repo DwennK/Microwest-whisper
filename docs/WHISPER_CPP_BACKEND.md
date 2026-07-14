@@ -98,8 +98,8 @@ Nettoyage:
 
 ## Packaging restant
 
-- Compiler ou recuperer des binaires `whisper-cli` par plateforme.
-- Compiler ou recuperer FFmpeg par plateforme avec licence compatible distribution.
+- Les binaires `whisper-cli` et FFmpeg sont récupérés depuis des URLs et SHA-256 verrouillés dans `scripts/native-dependencies.json`.
+- Les licences et la configuration FFmpeg sont archivées dans les ressources packagées; une validation juridique des codecs GPL transitifs reste requise avant diffusion commerciale.
 - Valider les binaires `whisper-cli`/FFmpeg dans les bundles packagés.
-- Signer/notariser macOS, signer Windows, valider Linux AppImage/deb/rpm.
+- Configurer les secrets exigés par le preflight pour signer/notariser macOS et signer Windows, puis valider Linux AppImage/deb/rpm.
 - Valider les exports sur un panel de fichiers longs avant release commerciale.

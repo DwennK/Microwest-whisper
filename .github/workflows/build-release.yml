@@ -48,6 +48,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify pinned native dependencies
+        run: npm run verify:native-manifest
+
+      - name: Test frontend
+        run: npm test
+
       - name: Build frontend
         run: npm run build:frontend
 
@@ -130,20 +136,52 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Install CMake for pinned macOS source build
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - name: Verify signed release credentials
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PRIVATE: ${{ secrets.APPLE_API_KEY_PRIVATE }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: node scripts/verify-release-secrets.mjs
+
+      - name: Prepare Apple notarization API key
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && runner.os == 'macOS' }}
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PRIVATE: ${{ secrets.APPLE_API_KEY_PRIVATE }}
+        shell: bash
+        run: |
+          if [ -n "$APPLE_API_KEY_PRIVATE" ]; then
+            key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+            printf '%s' "$APPLE_API_KEY_PRIVATE" > "$key_path"
+            chmod 600 "$key_path"
+            echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+          fi
+
       - name: Fetch native whisper.cpp binaries
         run: python scripts/fetch-whispercpp-binaries.py
 
       - name: Import Windows signing certificate
-        if: runner.os == 'Windows'
+        if: ${{ runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if (-not $env:WINDOWS_CERTIFICATE_BASE64) {
-            Write-Host "Windows signing certificate not configured; build will be unsigned."
-            exit 0
-          }
           [IO.File]::WriteAllBytes("windows-certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
           $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
           Import-PfxCertificate -FilePath windows-certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
@@ -165,7 +203,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
           APPLE_PROVIDER_SHORT_NAME: ${{ secrets.APPLE_PROVIDER_SHORT_NAME }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
           WINDOWS_DIGEST_ALGORITHM: ${{ vars.WINDOWS_DIGEST_ALGORITHM }}

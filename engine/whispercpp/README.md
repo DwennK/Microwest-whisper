@@ -36,5 +36,9 @@ keep the `whisper.cpp`/GGML DLLs next to `whisper-cli.exe`.
 only the current platform into `src-tauri/resources/engine/whispercpp` before
 Tauri bundles the app.
 
+Native archive URLs, SHA-256 checksums and license identifiers are pinned in
+`scripts/native-dependencies.json`. `THIRD_PARTY_NOTICES.md` and a copy of that
+manifest are included in every packaged engine resource directory.
+
 Models are downloaded on demand into the user's app data directory unless a
 model is preloaded here or forced with `MICROWEST_WHISPER_MODEL`.
