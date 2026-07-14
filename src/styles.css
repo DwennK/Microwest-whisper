@@ -15,7 +15,6 @@
 
 body {
   margin: 0;
-  min-width: 1000px;
   min-height: 720px;
 }
 
@@ -680,6 +679,74 @@ select:focus {
   margin-bottom: 12px;
 }
 
+.audio-player {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  border: 1px solid #cbdce5;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f6fafb;
+}
+
+.audio-player-head,
+.audio-player-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audio-player-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.audio-player-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-player-head > span,
+.audio-player-actions small {
+  color: #60717d;
+  font-size: 12px;
+}
+
+.audio-player-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1c5d78;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.audio-player audio {
+  width: 100%;
+  height: 38px;
+}
+
+.audio-player-actions {
+  justify-content: flex-start;
+}
+
+.audio-player-actions small {
+  margin-left: auto;
+  text-align: right;
+}
+
+.audio-player .inline-status {
+  margin: 0;
+}
+
+.audio-player .audio-error {
+  color: #8a2b20;
+}
+
 .search-field {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
@@ -969,5 +1036,17 @@ select:focus {
 
   .results-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .audio-player-head,
+  .audio-player-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .audio-player-actions small {
+    width: 100%;
+    margin-left: 0;
+    text-align: left;
   }
 }

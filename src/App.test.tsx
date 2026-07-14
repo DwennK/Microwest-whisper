@@ -7,6 +7,7 @@ const listenMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
+  convertFileSrc: (path: string) => `asset://localhost${path}`,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -106,6 +107,10 @@ describe("App", () => {
           state: { license_key: "MW-TEST", valid_until: "2099-01-01T00:00:00Z" },
           online: false,
         });
+      }
+
+      if (command === "allow_audio_asset") {
+        return Promise.resolve("/audio/meeting.wav");
       }
 
       return Promise.resolve(null);

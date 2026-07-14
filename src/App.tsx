@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -52,6 +52,8 @@ function App() {
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [appInfo, setAppInfo] = useState<AppDiagnostics | null>(null);
   const [settings, setSettings] = useState(loadTranscriptionSettings);
+  const [audioSource, setAudioSource] = useState("");
+  const [audioPlaybackMessage, setAudioPlaybackMessage] = useState("");
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateMessage, setUpdateMessage] = useState("");
@@ -193,6 +195,31 @@ function App() {
     if (outputDir) saveOutputDirectory(outputDir);
   }, [outputDir]);
 
+  useEffect(() => {
+    let stale = false;
+    if (!audioPath) {
+      setAudioSource("");
+      setAudioPlaybackMessage("");
+      return;
+    }
+
+    setAudioSource("");
+    setAudioPlaybackMessage("Préparation de la lecture audio...");
+    invoke<string>("allow_audio_asset", { audioPath })
+      .then((allowedPath) => {
+        if (stale) return;
+        setAudioSource(convertFileSrc(allowedPath));
+        setAudioPlaybackMessage("");
+      })
+      .catch((playbackError) => {
+        if (stale) return;
+        setAudioPlaybackMessage(`Lecture audio indisponible: ${String(playbackError)}`);
+      });
+
+    return () => {
+      stale = true;
+    };
+  }, [audioPath]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -457,6 +484,9 @@ function App() {
     if (activeStep === 4) {
       return (
         <ResultsScreen
+          audioPath={audioPath}
+          audioSource={audioSource}
+          audioPlaybackMessage={audioPlaybackMessage}
           outputs={outputs}
           quickOutputs={quickOutputs}
           selectionOutputs={selectionOutputs}

@@ -30,6 +30,9 @@ const history: HistoryRecord[] = [
 
 function renderResults(overrides: Partial<ComponentProps<typeof ResultsScreen>> = {}) {
   const props: ComponentProps<typeof ResultsScreen> = {
+    audioPath: "/audio/meeting.wav",
+    audioSource: "asset://localhost/audio/meeting.wav",
+    audioPlaybackMessage: "",
     outputs,
     quickOutputs: outputs.filter((item) => item.exists),
     selectionOutputs: [],
@@ -101,6 +104,35 @@ describe("ResultsScreen", () => {
     );
   });
 
+  it("seeks and starts playback when a segment timestamp is selected", async () => {
+    renderResults();
+    const audio = screen.getByLabelText("Lecteur audio meeting.wav") as HTMLAudioElement;
+    Object.defineProperty(audio, "duration", { configurable: true, value: 120 });
+    const play = vi.spyOn(audio, "play").mockResolvedValue();
+
+    fireEvent.click(screen.getByRole("button", { name: "00:01:01" }));
+
+    expect(audio.currentTime).toBe(61.5);
+    expect(play).toHaveBeenCalledOnce();
+  });
+
+  it("supports keyboard seeking outside editable and interactive fields", () => {
+    renderResults();
+    const audio = screen.getByLabelText("Lecteur audio meeting.wav") as HTMLAudioElement;
+    Object.defineProperty(audio, "duration", { configurable: true, value: 120 });
+    const play = vi.spyOn(audio, "play").mockResolvedValue();
+    audio.currentTime = 10;
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(audio.currentTime).toBe(15);
+
+    fireEvent.keyDown(screen.getByLabelText("Texte du segment 1"), { key: "ArrowRight" });
+    expect(audio.currentTime).toBe(15);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Avancer de 5 secondes" }), { key: " " });
+    expect(play).not.toHaveBeenCalled();
+  });
+
   it("filters segments before selecting visible rows", async () => {
     const onSetVisibleSegments = vi.fn();
     renderResults({ onSetVisibleSegments });
@@ -125,6 +157,8 @@ describe("ResultsScreen", () => {
       selectedText: "",
       history: [],
       preview: "",
+      audioPath: "",
+      audioSource: "",
     });
 
     expect(screen.getByText(/Aucun segment chargé pour ce fichier/i)).toBeInTheDocument();

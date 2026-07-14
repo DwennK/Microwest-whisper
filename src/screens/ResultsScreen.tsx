@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { Check, CircleStop, Clipboard, FileText, PencilLine, Save, Search, Subtitles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, CircleStop, Clipboard, FastForward, FileText, PencilLine, Rewind, Save, Search, Subtitles, Volume2 } from "lucide-react";
 import { SectionTitle } from "../components/ui";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { buildSrt, fileName, formatDuration, formatSegmentTimestamp } from "../lib/format";
@@ -10,6 +10,9 @@ const VIRTUAL_VIEWPORT_HEIGHT = 620;
 const VIRTUAL_OVERSCAN = 6;
 
 interface ResultsScreenProps {
+  audioPath: string;
+  audioSource: string;
+  audioPlaybackMessage: string;
   outputs: OutputFile[];
   quickOutputs: OutputFile[];
   selectionOutputs: OutputFile[];
@@ -33,6 +36,9 @@ interface ResultsScreenProps {
 }
 
 export function ResultsScreen({
+  audioPath,
+  audioSource,
+  audioPlaybackMessage,
   outputs,
   quickOutputs,
   selectionOutputs,
@@ -58,6 +64,10 @@ export function ResultsScreen({
   const [focusedSegment, setFocusedSegment] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<"text" | "srt">("text");
   const [scrollTop, setScrollTop] = useState(0);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioError, setAudioError] = useState("");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const debouncedSearch = useDebouncedValue(segmentSearch, 160);
 
@@ -76,13 +86,78 @@ export function ResultsScreen({
   const visibleIndexes = useMemo(() => filteredSegments.map(({ index }) => index), [filteredSegments]);
   const readyOutputs = useMemo(() => outputs.filter((item) => item.exists), [outputs]);
 
+  async function playFrom(seconds: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0
+      ? audio.duration
+      : Number.POSITIVE_INFINITY;
+    audio.currentTime = Math.max(0, Math.min(seconds, duration));
+    setAudioCurrentTime(audio.currentTime);
+    setAudioError("");
+    try {
+      await audio.play();
+    } catch (error) {
+      setAudioError(`Lecture impossible: ${String(error)}`);
+    }
+  }
+
+  function seekRelative(delta: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration = Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY;
+    audio.currentTime = Math.max(0, Math.min(audio.currentTime + delta, duration));
+    setAudioCurrentTime(audio.currentTime);
+  }
+
   function focusSegment(index: number) {
     setFocusedSegment(index);
     const filteredIndex = filteredSegments.findIndex((item) => item.index === index);
     if (filteredIndex >= 0) {
-      listRef.current?.scrollTo({ top: filteredIndex * VIRTUAL_ROW_HEIGHT, behavior: "smooth" });
+      listRef.current?.scrollTo?.({ top: filteredIndex * VIRTUAL_ROW_HEIGHT, behavior: "smooth" });
     }
+    void playFrom(segments[index]?.start ?? 0);
   }
+
+  useEffect(() => {
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setAudioError("");
+  }, [audioSource]);
+
+  useEffect(() => {
+    function handleKeyboard(event: KeyboardEvent) {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || target instanceof HTMLButtonElement
+        || target instanceof HTMLAnchorElement
+        || (target instanceof HTMLElement && target.isContentEditable)
+      ) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      if (event.key === " ") {
+        event.preventDefault();
+        if (audio.paused) {
+          void audio.play().catch((error) => setAudioError(`Lecture impossible: ${String(error)}`));
+        } else {
+          audio.pause();
+        }
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        seekRelative(-5);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        seekRelative(5);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, []);
 
   const copyPayload = previewMode === "srt" ? srtPreview : selectedText || preview;
   const emptySegmentsMessage = segments.length === 0
@@ -93,6 +168,43 @@ export function ResultsScreen({
     <section className="screen results-grid">
       <div className="primary-panel">
         <SectionTitle icon={<Search size={20} />} title="Segments" />
+        {audioPath && (
+          <div className="audio-player">
+            <div className="audio-player-head">
+              <div>
+                <span className="audio-player-label"><Volume2 size={16} /> Écoute synchronisée</span>
+                <strong>{fileName(audioPath)}</strong>
+              </div>
+              <span>{formatSegmentTimestamp(audioCurrentTime)} / {formatSegmentTimestamp(audioDuration)}</span>
+            </div>
+            {audioSource ? (
+              <audio
+                ref={audioRef}
+                aria-label={`Lecteur audio ${fileName(audioPath)}`}
+                controls
+                preload="metadata"
+                src={audioSource}
+                onDurationChange={(event) => setAudioDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
+                onTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime)}
+                onError={() => setAudioError("Ce format audio ne peut pas être lu directement. La transcription reste disponible.")}
+              />
+            ) : (
+              <p className="inline-status">{audioPlaybackMessage || "Lecture audio indisponible pour ce fichier."}</p>
+            )}
+            <div className="audio-player-actions">
+              <button type="button" aria-label="Reculer de 5 secondes" disabled={!audioSource} onClick={() => seekRelative(-5)}>
+                <Rewind size={16} />
+                5 s
+              </button>
+              <button type="button" aria-label="Avancer de 5 secondes" disabled={!audioSource} onClick={() => seekRelative(5)}>
+                <FastForward size={16} />
+                5 s
+              </button>
+              <small>Espace : lecture/pause · ←/→ : ±5 s · timestamp : lire le segment</small>
+            </div>
+            {audioError && <p className="inline-status audio-error">{audioError}</p>}
+          </div>
+        )}
         <div className="results-toolbar">
           <label className="search-field">
             <Search size={16} />

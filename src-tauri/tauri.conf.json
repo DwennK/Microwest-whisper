@@ -19,7 +19,14 @@
         "minHeight": 720,
         "resizable": true
       }
-    ]
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
   },
   "bundle": {
     "active": true,

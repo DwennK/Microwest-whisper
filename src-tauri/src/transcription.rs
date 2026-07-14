@@ -21,6 +21,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 const BACKEND_NAME: &str = "whisper.cpp";
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
 const CANCELLED_MESSAGE: &str = "Transcription annulée.";
+const PLAYABLE_AUDIO_EXTENSIONS: &[&str] = &[
+    "m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg",
+];
 type EventSink = Arc<dyn Fn(&str, &str, &str, &str, u8) -> Result<(), String> + Send + Sync>;
 
 fn path_with_appended_extension(path: &Path, extension: &str) -> PathBuf {
@@ -249,6 +252,34 @@ pub fn expected_outputs(
         Path::new(audio_path.trim()),
         Path::new(output_dir.trim()),
     ))
+}
+
+fn validated_audio_asset_path(audio_path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(audio_path.trim());
+    if !path.is_file() {
+        return Err(format!(
+            "Fichier audio introuvable: {}",
+            path.to_string_lossy()
+        ));
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if !PLAYABLE_AUDIO_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!("Format audio non pris en charge: {extension}"));
+    }
+    fs::canonicalize(&path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn allow_audio_asset(app: AppHandle, audio_path: String) -> Result<String, String> {
+    let path = validated_audio_asset_path(&audio_path)?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|error| error.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -1679,6 +1710,22 @@ mod tests {
         assert_eq!(segments[0].start, 1.0);
         assert_eq!(segments[0].end, 2.5);
         assert_eq!(segments[0].text, "Bonjour tout le monde");
+    }
+
+    #[test]
+    fn validates_audio_assets_before_exposing_them_to_the_webview() {
+        let root = env::temp_dir().join(format!("microwest-audio-asset-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let audio = root.join("meeting.wav");
+        let text = root.join("notes.txt");
+        fs::write(&audio, b"audio").unwrap();
+        fs::write(&text, b"notes").unwrap();
+
+        assert_eq!(validated_audio_asset_path(audio.to_str().unwrap()).unwrap(), fs::canonicalize(&audio).unwrap());
+        assert!(validated_audio_asset_path(text.to_str().unwrap()).unwrap_err().contains("Format audio non pris en charge"));
+        assert!(validated_audio_asset_path(root.join("missing.wav").to_str().unwrap()).unwrap_err().contains("introuvable"));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

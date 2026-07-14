@@ -20,6 +20,7 @@ fn main() {
             transcription::download_model,
             transcription::delete_downloaded_models,
             transcription::expected_outputs,
+            transcription::allow_audio_asset,
             transcription::read_history,
             transcription::read_text_preview,
             transcription::read_transcript_segments,
