@@ -27,12 +27,13 @@ Redistribution and use in source and binary forms, with or without modification,
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## FFmpeg executable — GPL-2.0-or-later
+## FFmpeg executable — GPL-2.0-or-later or GPL-3.0-or-later
 
-The FFmpeg executable distributed by the pinned imageio-ffmpeg wheels is a separate native program. Its build configuration includes `--enable-gpl`; release builds verify that flag and reject `--enable-nonfree` and `--enable-version3` so the recorded license classification cannot silently drift.
+The FFmpeg executable distributed by the pinned imageio-ffmpeg wheels is a separate native program. Release builds require `--enable-gpl` and reject `--enable-nonfree`. A build containing `--enable-version3` is recorded as `GPL-3.0-or-later`; other accepted builds are recorded as `GPL-2.0-or-later`, so platform differences cannot silently change the packaged license classification.
 
 - Legal and license information: https://ffmpeg.org/legal.html
 - GPL version 2 text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+- GPL version 3 text: https://www.gnu.org/licenses/gpl-3.0.html
 - FFmpeg source: https://github.com/FFmpeg/FFmpeg
 
 FFmpeg can include additional libraries whose notices and corresponding-source obligations depend on its build configuration. Before public commercial distribution, archive the full `ffmpeg -version` configuration for every target and complete a legal review of those transitive codecs. This notice records the pinned build inputs; it is not legal advice.

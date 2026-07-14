@@ -96,6 +96,12 @@ def verify_manifest(manifest: dict) -> None:
             if len(checksum) != 64 or any(character not in "0123456789abcdef" for character in checksum):
                 raise SystemExit(f"Invalid SHA-256 for {name}/{artifact_name}")
 
+    ffmpeg_policy = components["imageio-ffmpeg"].get("bundled_binary_license", {})
+    if not all(ffmpeg_policy.get(key) for key in ("spdx", "version3_spdx", "required_build_flag")):
+        raise SystemExit("Incomplete FFmpeg bundled binary license policy")
+    if "--enable-nonfree" not in ffmpeg_policy.get("forbidden_build_flags", []):
+        raise SystemExit("FFmpeg license policy must reject --enable-nonfree")
+
 
 def component(manifest: dict, name: str) -> dict:
     return manifest["components"][name]
@@ -233,8 +239,14 @@ def verify_ffmpeg_license(manifest: dict, executable: Path) -> None:
     present_forbidden = [flag for flag in forbidden if flag in build_info]
     if present_forbidden:
         raise SystemExit(f"Forbidden FFmpeg build flags: {', '.join(present_forbidden)}")
-    (executable.parent / "FFMPEG_BUILD.txt").write_text(build_info.strip() + "\n", encoding="utf-8")
-    print(f"Verified FFmpeg license policy: {license_policy['spdx']}")
+    effective_spdx = (
+        license_policy["version3_spdx"]
+        if "--enable-version3" in build_info
+        else license_policy["spdx"]
+    )
+    recorded_build = f"Microwest verified SPDX: {effective_spdx}\n\n{build_info.strip()}\n"
+    (executable.parent / "FFMPEG_BUILD.txt").write_text(recorded_build, encoding="utf-8")
+    print(f"Verified FFmpeg license policy: {effective_spdx}")
 
 
 def install_executable(source: Path, destination: Path) -> None:

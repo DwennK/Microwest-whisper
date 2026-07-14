@@ -34,9 +34,10 @@
       },
       "bundled_binary_license": {
         "spdx": "GPL-2.0-or-later",
+        "version3_spdx": "GPL-3.0-or-later",
         "url": "https://ffmpeg.org/legal.html",
         "required_build_flag": "--enable-gpl",
-        "forbidden_build_flags": ["--enable-nonfree", "--enable-version3"]
+        "forbidden_build_flags": ["--enable-nonfree"]
       },
       "artifacts": {
         "macos-aarch64": {
