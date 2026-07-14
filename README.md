@@ -24,6 +24,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Téléchargement et suppression des modèles depuis l'app.
 - Transcription locale avec segments horodatés.
 - Recherche dans la transcription, édition légère des segments et copie du texte.
+- Préférences de transcription et dossier de sortie conservés localement.
 - Aperçu SRT et export dédié des segments sélectionnés.
 - Exports générés:
   - Markdown;

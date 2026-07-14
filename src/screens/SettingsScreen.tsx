@@ -1,8 +1,7 @@
 import { Download, FolderOpen, History, Loader2, Play, Settings2, Trash2 } from "lucide-react";
 import { NumberField, SectionTitle, Select, Toggle } from "../components/ui";
-import type { EngineStatus, ModelInfo, ModelInventory, TranscriptionRequest } from "../types";
-
-type TranscriptionSettings = Omit<TranscriptionRequest, "audio_path" | "output_dir">;
+import { audioFilterOptions, deviceOptions, languageOptions, modelOptions, type TranscriptionSettings } from "../lib/preferences";
+import type { EngineStatus, ModelInfo, ModelInventory } from "../types";
 
 interface SettingsScreenProps {
   settings: TranscriptionSettings;
@@ -44,17 +43,17 @@ export function SettingsScreen({
       <div className="primary-panel">
         <SectionTitle icon={<Settings2 size={20} />} title="Paramètres transcription" />
         <div className="form-grid">
-          <Select label="Modèle" value={settings.model} onChange={(model) => onSettingsChange({ ...settings, model })} options={["large-v3-turbo-q8_0", "large-v3-turbo-q5_0"]} />
+          <Select label="Modèle" value={settings.model} onChange={(model) => onSettingsChange({ ...settings, model })} options={[...modelOptions]} />
           <Select
             label="Langue"
             value={settings.language}
             onChange={(language) => onSettingsChange({ ...settings, language })}
-            options={["auto", "fr", "en", "de", "it", "es", "pt", "nl", "pl", "uk", "ar", "zh", "ja", "ko"]}
+            options={[...languageOptions]}
           />
           <Select label="Backend" value="whisper.cpp" disabled onChange={() => undefined} options={["whisper.cpp"]} />
-          <Select label="Filtre audio" value={settings.audio_filter} onChange={(audio_filter) => onSettingsChange({ ...settings, audio_filter })} options={["loudnorm", "voice-clean", "none"]} />
+          <Select label="Filtre audio" value={settings.audio_filter} onChange={(audio_filter) => onSettingsChange({ ...settings, audio_filter })} options={[...audioFilterOptions]} />
           <NumberField label="Threads CPU (0 = auto)" value={settings.threads} min={0} max={64} onChange={(threads) => onSettingsChange({ ...settings, threads })} />
-          <Select label="Device" value={settings.device} onChange={(device) => onSettingsChange({ ...settings, device })} options={["auto", "cpu"]} />
+          <Select label="Device" value={settings.device} onChange={(device) => onSettingsChange({ ...settings, device })} options={[...deviceOptions]} />
         </div>
         <div className="toggle-grid">
           <Toggle label="Nettoyer silences" checked={settings.trim_silence} onChange={(trim_silence) => onSettingsChange({ ...settings, trim_silence })} />

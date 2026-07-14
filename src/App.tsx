@@ -12,6 +12,12 @@ import { useLicense } from "./hooks/useLicense";
 import { useModels } from "./hooks/useModels";
 import { useOutputs } from "./hooks/useOutputs";
 import { useTranscription } from "./hooks/useTranscription";
+import {
+  loadOutputDirectory,
+  loadTranscriptionSettings,
+  saveOutputDirectory,
+  saveTranscriptionSettings,
+} from "./lib/preferences";
 import { AboutScreen } from "./screens/AboutScreen";
 import { AudioScreen } from "./screens/AudioScreen";
 import { LicenseScreen } from "./screens/LicenseScreen";
@@ -32,16 +38,6 @@ import type {
 const steps = ["Licence", "Audio", "Réglages", "Progression", "Résultats", "À propos"] as const;
 const audioExtensions = ["m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg"];
 
-const defaultRequest: Omit<TranscriptionRequest, "audio_path" | "output_dir"> = {
-  model: "large-v3-turbo-q8_0",
-  language: "fr",
-  audio_filter: "loudnorm",
-  threads: 0,
-  device: "auto",
-  trim_silence: false,
-  force: false,
-};
-
 const stageSteps = [
   { stage: "Préparation", min: 5 },
   { stage: "Préparation audio", min: 10 },
@@ -55,7 +51,7 @@ function App() {
   const [activeStep, setActiveStep] = useState(0);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [appInfo, setAppInfo] = useState<AppDiagnostics | null>(null);
-  const [settings, setSettings] = useState(defaultRequest);
+  const [settings, setSettings] = useState(loadTranscriptionSettings);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateMessage, setUpdateMessage] = useState("");
@@ -171,10 +167,11 @@ function App() {
         setEngine(engineStatus);
         setAppInfo(diagnostics);
         hydrateModels(modelState);
-        setOutputDir(engineStatus.default_output_dir);
+        const preferredOutputDir = loadOutputDirectory() || engineStatus.default_output_dir;
+        setOutputDir(preferredOutputDir);
         setWorkDir(engineStatus.default_work_dir);
         hydrateLicense(licenseState);
-        await handleRefreshHistory(engineStatus.default_output_dir);
+        await handleRefreshHistory(preferredOutputDir);
         const validation = await invoke<LicenseCheck>("validate_license", { forceOnline: false });
         applyLicenseCheck(validation);
         if (validation.ok) {
@@ -187,6 +184,15 @@ function App() {
 
     void boot();
   }, []);
+
+  useEffect(() => {
+    saveTranscriptionSettings(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    if (outputDir) saveOutputDirectory(outputDir);
+  }, [outputDir]);
+
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
