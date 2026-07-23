@@ -225,7 +225,7 @@ Payload:
 {
   "licenseKey": "MW-XXXXX-XXXXX-XXXXX-XXXXX",
   "machineId": "machine-id-local",
-  "appVersion": "0.3.0"
+  "appVersion": "0.3.1"
 }
 ```
 
