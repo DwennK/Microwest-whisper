@@ -1,3 +1,5 @@
+mod development;
+
 use chrono::{DateTime, Utc};
 mod lease;
 use serde::Serialize;
@@ -26,6 +28,13 @@ pub struct LicenseCheck {
 
 #[tauri::command]
 pub fn read_license_state() -> LicenseSnapshot {
+    if development::enabled() {
+        return LicenseSnapshot {
+            state: json!({ "development_mode": true }),
+            status_text: "Mode développement · licence non requise.".to_string(),
+            cached_valid: true,
+        };
+    }
     let state = read_state();
     LicenseSnapshot {
         status_text: license_status_text(&state),
@@ -36,6 +45,9 @@ pub fn read_license_state() -> LicenseSnapshot {
 
 #[tauri::command]
 pub async fn activate_license(license_key: String) -> Result<LicenseCheck, String> {
+    if development::enabled() {
+        return validate_license(false).await;
+    }
     let license_key = license_key.trim().to_string();
     if license_key.is_empty() {
         return Ok(LicenseCheck {
@@ -94,11 +106,11 @@ pub async fn activate_license(license_key: String) -> Result<LicenseCheck, Strin
 
 #[tauri::command]
 pub async fn validate_license(force_online: bool) -> Result<LicenseCheck, String> {
-    if development_bypass() {
+    if development::enabled() {
         return Ok(LicenseCheck {
             ok: true,
-            message: "Licence ignorée en mode développement.".to_string(),
-            state: read_state(),
+            message: "Mode développement · licence non requise.".to_string(),
+            state: json!({ "development_mode": true }),
             online: false,
         });
     }
@@ -185,7 +197,7 @@ pub async fn validate_license(force_online: bool) -> Result<LicenseCheck, String
 }
 
 pub fn local_license_allows_run() -> Result<(), String> {
-    if development_bypass() {
+    if development::enabled() {
         return Ok(());
     }
 
@@ -197,9 +209,6 @@ pub fn local_license_allows_run() -> Result<(), String> {
     Err(license_status_text(&state))
 }
 
-fn development_bypass() -> bool {
-    cfg!(debug_assertions) && env::var("MICROWEST_LICENSE_BYPASS").ok().as_deref() == Some("1")
-}
 fn api_base() -> String {
     if cfg!(debug_assertions) {
         if let Ok(value) = env::var("MICROWEST_LICENSE_API_BASE") {
