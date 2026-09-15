@@ -215,8 +215,8 @@ Voir [docs/UPDATER.md](docs/UPDATER.md).
 L'app appelle l'API licence IA Swiss:
 
 ```text
-POST https://iaswiss.com/api/licenses/activate
-POST https://iaswiss.com/api/licenses/validate
+POST https://licences.iaswiss.com/api/licenses/activate
+POST https://licences.iaswiss.com/api/licenses/validate
 ```
 
 Payload:
@@ -229,12 +229,18 @@ Payload:
 }
 ```
 
-Aucune clé Stripe n'est embarquée dans l'application. Le backend IA Swiss vérifie l'abonnement.
+Aucune clé privée de signature ni clé Stripe n'est embarquée dans l'application. Le backend IASwiss vérifie l'abonnement ou la licence offerte. Les anciennes routes `iaswiss.com/api/licenses/*` restent compatibles.
+
+Depuis **0.3.4**, le cache doit contenir un droit Ed25519 signé par IASwiss, lié à la licence, au produit `microwest-whisper`, à l'identifiant d'installation et à une expiration (7 jours par défaut). Le code natif vérifie ce droit avant d'autoriser une transcription. Modifier `valid_until` ou inventer un fichier JSON ne donne aucun accès. Un ancien cache conserve sa clé et son installation, mais exige une première vérification en ligne après mise à jour.
+
+Un refus explicite du serveur supprime le droit hors ligne et persiste après redémarrage. Les réponses déjà en vol ne peuvent pas le rétablir. Les modifications du cache utilisent un verrou interprocessus et un remplacement atomique du fichier. Une panne réseau, HTTP 429 ou HTTP 5xx conserve seulement un droit signé encore valide.
+
+`MICROWEST_LICENSE_BYPASS` et `MICROWEST_LICENSE_API_BASE` fonctionnent uniquement dans les builds de développement. Ils sont ignorés dans un binaire de release. L'identifiant local n'est pas une attestation matérielle : une personne contrôlant le poste peut copier un cache signé ou modifier un binaire. La révocation hors ligne reste bornée par l'expiration du dernier droit signé ; elle n'est pas instantanée sans connexion.
 
 Variables dev utiles:
 
 ```bash
-export MICROWEST_LICENSE_API_BASE=https://iaswiss.com/api/licenses
+export MICROWEST_LICENSE_API_BASE=https://licences.iaswiss.com/api/licenses
 export MICROWEST_LICENSE_STATE=/tmp/microwest-license.json
 ```
 
