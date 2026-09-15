@@ -10,14 +10,7 @@ if (!existsSync(artifactsDir)) {
 const rules = [
   { test: (name) => name.endsWith(".app.tar.gz"), output: "Microwest-Whisper-mac.app.tar.gz" },
   { test: (name) => name.endsWith(".dmg"), output: "Microwest-Whisper-mac.dmg" },
-  { test: (name) => name.endsWith(".nsis.zip"), output: "Microwest-Whisper-windows.nsis.zip" },
-  { test: (name) => name.endsWith(".msi.zip"), output: "Microwest-Whisper-windows.msi.zip" },
   { test: (name) => name.endsWith(".exe"), output: "Microwest-Whisper-windows.exe" },
-  { test: (name) => name.endsWith(".msi"), output: "Microwest-Whisper-windows.msi" },
-  { test: (name) => name.endsWith(".AppImage.tar.gz"), output: "Microwest-Whisper-linux.AppImage.tar.gz" },
-  { test: (name) => name.endsWith(".AppImage"), output: "Microwest-Whisper-linux.AppImage" },
-  { test: (name) => name.endsWith(".deb"), output: "Microwest-Whisper-linux.deb" },
-  { test: (name) => name.endsWith(".rpm"), output: "Microwest-Whisper-linux.rpm" },
 ];
 
 const renamed = [];

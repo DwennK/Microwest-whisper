@@ -21,27 +21,30 @@ const platforms = new Map();
 for (const signaturePath of signatures) {
   const artifactPath = signaturePath.slice(0, -".sig".length);
   if (!existsSync(artifactPath)) {
-    continue;
+    throw new Error(`Updater signature has no artifact: ${signaturePath}`);
   }
 
   const target = platformTarget(artifactPath);
   if (!target) {
-    continue;
+    throw new Error(`Unsupported updater artifact: ${artifactPath}`);
+  }
+  if (!readFileSync(signaturePath, "utf8").trim()) {
+    throw new Error(`Empty updater signature: ${signaturePath}`);
   }
 
   const candidate = {
-    priority: artifactPriority(artifactPath),
     signaturePath,
     artifactPath,
   };
   const previous = platforms.get(target);
-  if (!previous || candidate.priority > previous.priority) {
-    platforms.set(target, candidate);
-  }
+  if (previous) throw new Error(`Duplicate updater artifact for ${target}`);
+  platforms.set(target, candidate);
 }
 
-if (platforms.size === 0) {
-  throw new Error(`No signed updater artifacts were found in ${artifactsDir}`);
+for (const target of ["darwin-aarch64", "windows-x86_64"]) {
+  if (!platforms.has(target)) {
+    throw new Error(`Missing signed updater artifact for ${target}`);
+  }
 }
 
 const manifest = {
@@ -81,39 +84,10 @@ function walk(root) {
 }
 
 function platformTarget(artifactPath) {
-  const lowerPath = artifactPath.toLowerCase().replace(/\\/g, "/");
-  const lowerName = basename(artifactPath).toLowerCase();
-
-  if (lowerName.endsWith(".exe") || lowerName.endsWith(".msi") || lowerName.endsWith(".nsis.zip") || lowerName.endsWith(".msi.zip")) {
-    return "windows-x86_64";
-  }
-
-  if (lowerName.endsWith(".appimage") || lowerName.endsWith(".appimage.tar.gz") || lowerPath.includes("/appimage/")) {
-    return lowerName.includes("aarch64") || lowerName.includes("arm64") ? "linux-aarch64" : "linux-x86_64";
-  }
-
-  if (lowerName.endsWith(".app.tar.gz") || lowerPath.includes("/macos/")) {
-    if (lowerName.includes("x86_64") || lowerName.includes("x64") || lowerName.includes("intel")) {
-      return "darwin-x86_64";
-    }
-    if (lowerName.includes("aarch64") || lowerName.includes("arm64")) {
-      return "darwin-aarch64";
-    }
-    return process.env.MACOS_UPDATER_TARGET ?? "darwin-aarch64";
-  }
-
+  const name = basename(artifactPath);
+  if (name === "Microwest-Whisper-windows.exe") return "windows-x86_64";
+  if (name === "Microwest-Whisper-mac.app.tar.gz") return "darwin-aarch64";
   return null;
-}
-
-function artifactPriority(artifactPath) {
-  const lowerName = basename(artifactPath).toLowerCase();
-  if (lowerName.endsWith(".exe") || lowerName.endsWith(".nsis.zip")) {
-    return 100;
-  }
-  if (lowerName.endsWith(".msi") || lowerName.endsWith(".msi.zip")) {
-    return 80;
-  }
-  return 50;
 }
 
 function githubAssetName(name) {

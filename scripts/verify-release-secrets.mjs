@@ -1,41 +1,24 @@
+import { readFileSync } from "node:fs";
+
 const platform = (process.env.RUNNER_OS || process.argv.find((argument) => argument.startsWith("--platform="))?.split("=")[1] || "").toLowerCase();
-
-if (!platform) {
-  throw new Error("Release signing preflight requires RUNNER_OS or --platform=<macOS|Windows|Linux>.");
+if (!["macos", "windows"].includes(platform)) {
+  throw new Error("Release preflight supports only macOS and Windows.");
+}
+if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
+  throw new Error("Release preflight requires TAURI_SIGNING_PRIVATE_KEY to protect automatic updates.");
 }
 
-const missing = [];
-requireValues(["TAURI_SIGNING_PRIVATE_KEY"]);
-
-if (platform === "macos") {
-  requireValues(["APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "APPLE_SIGNING_IDENTITY"]);
-  const appleIdCredentials = hasValues(["APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"]);
-  const appStoreConnectCredentials = hasValues(["APPLE_API_KEY", "APPLE_API_ISSUER", "APPLE_API_KEY_PRIVATE"]);
-  if (!appleIdCredentials && !appStoreConnectCredentials) {
-    missing.push("Apple notarization credentials (APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PRIVATE)");
+const tag = process.env.GITHUB_REF_NAME;
+if (tag) {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const versions = [
+    JSON.parse(read("package.json")).version,
+    JSON.parse(read("src-tauri/tauri.conf.json")).version,
+    read("src-tauri/Cargo.toml").match(/^version = "([^"]+)"/m)?.[1],
+  ];
+  if (versions.some((version) => `v${version}` !== tag)) {
+    throw new Error(`Release tag ${tag} does not match application versions: ${versions.join(", ")}`);
   }
 }
 
-if (platform === "windows") {
-  requireValues([
-    "WINDOWS_CERTIFICATE_BASE64",
-    "WINDOWS_CERTIFICATE_PASSWORD",
-    "WINDOWS_CERTIFICATE_THUMBPRINT",
-  ]);
-}
-
-if (missing.length > 0) {
-  throw new Error(`Signed release preflight failed for ${platform}:\n- ${missing.join("\n- ")}`);
-}
-
-console.log(`Signed release preflight passed for ${platform}.`);
-
-function hasValues(names) {
-  return names.every((name) => Boolean(process.env[name]?.trim()));
-}
-
-function requireValues(names) {
-  for (const name of names) {
-    if (!process.env[name]?.trim()) missing.push(name);
-  }
-}
+console.log(`Release preflight passed for ${platform}; updater signing required, paid OS certificates not required.`);

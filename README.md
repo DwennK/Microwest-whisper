@@ -14,7 +14,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Licence IA Swiss conservée.
 - Auto-update manuel via GitHub Releases.
 - Checksums SHA-256 publiés comme asset et dans les notes GitHub Releases.
-- Builds CI macOS, Windows et Linux.
+- Releases Mac Apple Silicon et Windows x64 ; tests CI sur Linux.
 
 ## Fonctionnalités
 
@@ -185,7 +185,7 @@ Publier une release:
 2. Committer.
 3. Créer un tag `vX.Y.Z`.
 4. Pousser `main` puis le tag.
-5. GitHub Actions construit macOS, Windows et Linux.
+5. GitHub Actions construit Mac Apple Silicon (`.dmg`) et Windows x64 (`.exe`).
 6. Le workflow génère les signatures updater, `latest.json` et `SHA256SUMS.txt`.
 7. La release GitHub publie les installateurs, signatures, checksums et le manifeste updater.
 
@@ -200,13 +200,9 @@ Secrets GitHub nécessaires:
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` si la clé est protégée par mot de passe.
 
-Secrets requis pour toute release taguée distribuable:
+Aucun certificat payant Apple ou Windows n'est nécessaire. Le Mac utilise une signature locale ad hoc, sans notarisation ; l'installateur Windows n'est pas signé par un éditeur certifié. Les avertissements et blocages possibles à l'installation sont décrits dans [docs/RELEASE_INSTALLATION.md](docs/RELEASE_INSTALLATION.md).
 
-- macOS/notarisation: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, puis `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID` ou `APPLE_API_KEY` + `APPLE_API_ISSUER`.
-- Windows: `WINDOWS_CERTIFICATE_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_CERTIFICATE_THUMBPRINT`.
-- Variables Windows optionnelles: `WINDOWS_DIGEST_ALGORITHM`, `WINDOWS_TIMESTAMP_URL`.
-
-Avec App Store Connect, le contenu de la clé privée `.p8` est fourni dans `APPLE_API_KEY_PRIVATE`; le workflow crée le fichier temporaire attendu par Tauri. Les builds ordinaires de `main` peuvent rester non signés pour validation, mais un tag `v*` échoue avant compilation si la signature updater, la signature OS ou la notarisation requise est absente.
+La clé Tauri reste obligatoire pour vérifier l'authenticité des mises à jour. Les pushes ordinaires sur `main` exécutent les tests sans compiler d'installateurs. Les tags `v*` exécutent les tests, les deux builds puis la publication ; un lancement manuel sur un tag permet de reprendre une publication. Les artefacts Actions intermédiaires sont conservés un jour ; les fichiers de release restent disponibles. Les anciennes releases Linux sont conservées.
 
 Voir [docs/UPDATER.md](docs/UPDATER.md).
 
@@ -267,8 +263,7 @@ Les versions, URLs, SHA-256 et licences des archives `whisper.cpp` et imageio-ff
 
 Avant une distribution commerciale complète:
 
-- configurer les secrets Apple Developer et le certificat Windows exigés par le preflight de release;
-- valider les bundles Linux AppImage/deb/rpm sur distributions cibles;
+- vérifier l’installation des bundles Mac Apple Silicon et Windows x64 sur les systèmes cibles;
 - faire valider les obligations GPL et codecs transitifs listées dans les notices FFmpeg.
 
 L'app expose aussi un écran `À propos` avec version, backend, modèle, plateforme, licence, endpoint updater et chemins locaux.
