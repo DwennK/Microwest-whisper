@@ -21,6 +21,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 const BACKEND_NAME: &str = "whisper.cpp";
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 8 * 60 * 60;
 const CANCELLED_MESSAGE: &str = "Transcription annulée.";
+const HISTORY_FILE_NAME: &str = ".microwest-history.jsonl";
+const LEGACY_HISTORY_FILE_NAME: &str = "transcription-history.jsonl";
 const PLAYABLE_AUDIO_EXTENSIONS: &[&str] = &[
     "m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg",
 ];
@@ -284,7 +286,14 @@ pub fn allow_audio_asset(app: AppHandle, audio_path: String) -> Result<String, S
 
 #[tauri::command]
 pub fn read_history(output_dir: String) -> Result<Vec<HistoryRecord>, String> {
-    let history_path = Path::new(output_dir.trim()).join("transcription-history.jsonl");
+    let output_dir = Path::new(output_dir.trim());
+    let private_history_path = output_dir.join(HISTORY_FILE_NAME);
+    let legacy_history_path = output_dir.join(LEGACY_HISTORY_FILE_NAME);
+    let history_path = if private_history_path.exists() {
+        private_history_path
+    } else {
+        legacy_history_path
+    };
     if !history_path.exists() {
         return Ok(Vec::new());
     }
@@ -381,15 +390,23 @@ pub fn read_transcript_segments(
     let output_dir = PathBuf::from(output_dir.trim());
     let stem = paths::transcript_output_stem(&audio);
     let segments_path = output_dir.join(format!("{stem}.segments.json"));
+    let srt_path = output_dir.join(format!("{stem}.segments.srt"));
 
-    if !segments_path.exists() {
-        return Ok(Vec::new());
+    // Current releases save corrections to SRT. Older JSON exports are retained
+    // for the user, but must not override newer edits when both files exist.
+    if srt_path.exists() {
+        let content = fs::read_to_string(&srt_path).map_err(|error| error.to_string())?;
+        return Ok(parse_srt_segments(&content));
     }
 
-    let content = fs::read_to_string(&segments_path).map_err(|error| error.to_string())?;
-    let transcript =
-        serde_json::from_str::<NativeTranscript>(&content).map_err(|error| error.to_string())?;
-    Ok(transcript.segments)
+    if segments_path.exists() {
+        let content = fs::read_to_string(&segments_path).map_err(|error| error.to_string())?;
+        let transcript = serde_json::from_str::<NativeTranscript>(&content)
+            .map_err(|error| error.to_string())?;
+        return Ok(transcript.segments);
+    }
+
+    Ok(Vec::new())
 }
 
 #[tauri::command]
@@ -456,18 +473,17 @@ pub fn save_transcript_edits(
         return Err("Aucun segment à enregistrer.".to_string());
     }
 
-    let stem = paths::transcript_output_stem(&audio);
-    let segments_path = output_dir.join(format!("{stem}.segments.json"));
-    if !segments_path.exists() {
-        return Err(format!(
-            "Segments source introuvables: {}",
-            segments_path.to_string_lossy()
-        ));
-    }
-
-    let content = fs::read_to_string(&segments_path).map_err(|error| error.to_string())?;
-    let transcript =
-        serde_json::from_str::<NativeTranscript>(&content).map_err(|error| error.to_string())?;
+    let transcript = NativeTranscript {
+        backend: BACKEND_NAME.to_string(),
+        model: "transcription corrigée".to_string(),
+        model_path: String::new(),
+        language: String::new(),
+        source_audio: audio.to_string_lossy().to_string(),
+        preprocessed_wav: String::new(),
+        duration_seconds: None,
+        text: String::new(),
+        segments: Vec::new(),
+    };
     let transcript = exports::refreshed_transcript(transcript, segments);
     exports::write_outputs(&audio, &output_dir, &transcript)?;
 
@@ -840,7 +856,16 @@ fn append_history(
     duration_seconds: Option<f64>,
     status: &str,
 ) -> Result<(), String> {
-    let history = paths.output_dir.join("transcription-history.jsonl");
+    let history = paths.output_dir.join(HISTORY_FILE_NAME);
+    let legacy_history = paths.output_dir.join(LEGACY_HISTORY_FILE_NAME);
+    if !history.exists() && legacy_history.exists() {
+        fs::rename(&legacy_history, &history).map_err(|error| {
+            format!(
+                "Impossible de déplacer l'ancien historique {}: {error}",
+                legacy_history.to_string_lossy()
+            )
+        })?;
+    }
     let record = json!({
         "created_at": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         "status": status,
@@ -1714,16 +1739,28 @@ mod tests {
 
     #[test]
     fn validates_audio_assets_before_exposing_them_to_the_webview() {
-        let root = env::temp_dir().join(format!("microwest-audio-asset-test-{}", uuid::Uuid::new_v4()));
+        let root = env::temp_dir().join(format!(
+            "microwest-audio-asset-test-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(&root).unwrap();
         let audio = root.join("meeting.wav");
         let text = root.join("notes.txt");
         fs::write(&audio, b"audio").unwrap();
         fs::write(&text, b"notes").unwrap();
 
-        assert_eq!(validated_audio_asset_path(audio.to_str().unwrap()).unwrap(), fs::canonicalize(&audio).unwrap());
-        assert!(validated_audio_asset_path(text.to_str().unwrap()).unwrap_err().contains("Format audio non pris en charge"));
-        assert!(validated_audio_asset_path(root.join("missing.wav").to_str().unwrap()).unwrap_err().contains("introuvable"));
+        assert_eq!(
+            validated_audio_asset_path(audio.to_str().unwrap()).unwrap(),
+            fs::canonicalize(&audio).unwrap()
+        );
+        assert!(validated_audio_asset_path(text.to_str().unwrap())
+            .unwrap_err()
+            .contains("Format audio non pris en charge"));
+        assert!(
+            validated_audio_asset_path(root.join("missing.wav").to_str().unwrap())
+                .unwrap_err()
+                .contains("introuvable")
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1779,10 +1816,7 @@ mod tests {
 
         let outputs = exports::write_outputs(&paths.audio, &paths.output_dir, &transcript).unwrap();
 
-        assert_eq!(outputs.len(), 7);
-        assert!(outputs
-            .iter()
-            .any(|path| path.to_string_lossy().ends_with(".transcript.md")));
+        assert_eq!(outputs.len(), 3);
         assert!(outputs
             .iter()
             .any(|path| path.to_string_lossy().ends_with(".clean.txt")));
@@ -1792,13 +1826,20 @@ mod tests {
         assert!(outputs
             .iter()
             .any(|path| path.to_string_lossy().ends_with(".transcript.docx")));
-        let markdown_path = outputs
-            .iter()
-            .find(|path| path.to_string_lossy().ends_with(".transcript.md"))
-            .unwrap();
-        let markdown = fs::read_to_string(markdown_path).unwrap();
-        assert!(markdown.contains("Backend: `whisper.cpp`"));
-        assert!(!markdown.contains("SPEAKER_"));
+        assert!(!output_dir
+            .join(format!(
+                "{}.segments.json",
+                paths::transcript_output_stem(&audio)
+            ))
+            .exists());
+
+        let loaded = read_transcript_segments(
+            audio.to_string_lossy().to_string(),
+            output_dir.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[1].text, "Suite");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1859,7 +1900,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outputs.len(), 5);
+        assert_eq!(outputs.len(), 3);
         assert!(outputs.iter().all(|output| output.exists));
         assert!(outputs
             .iter()
@@ -1925,6 +1966,14 @@ mod tests {
                 text: "Texte original".to_string(),
             }],
         };
+        let stem = paths::transcript_output_stem(&audio);
+        let legacy_json = output_dir.join(format!("{stem}.segments.json"));
+        let legacy_markdown = output_dir.join(format!("{stem}.transcript.md"));
+        let original_json = serde_json::to_string(&transcript).unwrap();
+        fs::write(&legacy_json, &original_json).unwrap();
+        fs::write(&legacy_markdown, "User-authored notes to retain").unwrap();
+        // A JSON-only transcript from an older release remains readable.
+        assert_eq!(read_transcript_segments(audio.to_string_lossy().to_string(), output_dir.to_string_lossy().to_string()).unwrap()[0].text, "Texte original");
         exports::write_outputs(&audio, &output_dir, &transcript).unwrap();
 
         let outputs = save_transcript_edits(TranscriptEditSaveRequest {
@@ -1938,18 +1987,19 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(outputs.len(), 7);
+        assert_eq!(outputs.len(), 3);
         let stem = paths::transcript_output_stem(&audio);
         let clean_text = fs::read_to_string(output_dir.join(format!("{stem}.clean.txt"))).unwrap();
-        let markdown =
-            fs::read_to_string(output_dir.join(format!("{stem}.transcript.md"))).unwrap();
-        let segments_json =
-            fs::read_to_string(output_dir.join(format!("{stem}.segments.json"))).unwrap();
+        let srt = fs::read_to_string(output_dir.join(format!("{stem}.segments.srt"))).unwrap();
 
         assert_eq!(clean_text, "Texte corrigé");
-        assert!(markdown.contains("Texte corrigé"));
-        assert!(segments_json.contains("Texte corrigé"));
-        assert!(!segments_json.contains("Texte original"));
+        assert!(srt.contains("Texte corrigé"));
+        assert!(!srt.contains("Texte original"));
+        assert!(output_dir.join(format!("{stem}.transcript.docx")).exists());
+        assert_eq!(fs::read_to_string(&legacy_json).unwrap(), original_json);
+        assert_eq!(fs::read_to_string(&legacy_markdown).unwrap(), "User-authored notes to retain");
+        let reopened = read_transcript_segments(audio.to_string_lossy().to_string(), output_dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(reopened[0].text, "Texte corrigé");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2087,21 +2137,27 @@ SRT
         assert!(work_dir.join(format!("{stem}.whispercpp.json")).exists());
         assert!(work_dir.join(format!("{stem}.whispercpp.srt")).exists());
 
-        let expected_suffixes = [
-            ".transcript.txt",
-            ".transcript.md",
-            ".clean.txt",
-            ".segments.srt",
-            ".segments.json",
-            ".transcript.docx",
-            ".whispercpp.json",
-        ];
+        let expected_suffixes = [".segments.srt", ".clean.txt", ".transcript.docx"];
         for suffix in expected_suffixes {
             assert!(
                 output_dir.join(format!("{stem}{suffix}")).exists(),
                 "missing output suffix {suffix}"
             );
         }
+
+        for suffix in [
+            ".transcript.txt",
+            ".transcript.md",
+            ".segments.json",
+            ".whispercpp.json",
+        ] {
+            assert!(
+                !output_dir.join(format!("{stem}{suffix}")).exists(),
+                "obsolete output suffix {suffix} should not be present"
+            );
+        }
+        assert!(output_dir.join(HISTORY_FILE_NAME).exists());
+        assert!(!output_dir.join(LEGACY_HISTORY_FILE_NAME).exists());
 
         let clean_text = fs::read_to_string(output_dir.join(format!("{stem}.clean.txt"))).unwrap();
         assert!(clean_text.contains("Bonjour depuis le faux backend"));

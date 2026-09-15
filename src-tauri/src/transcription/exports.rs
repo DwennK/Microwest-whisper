@@ -15,27 +15,14 @@ pub(super) fn write_outputs(
     transcript: &NativeTranscript,
 ) -> Result<Vec<PathBuf>, String> {
     let stem = paths::transcript_output_stem(audio);
-    let txt = output_dir.join(format!("{stem}.transcript.txt"));
-    let md = output_dir.join(format!("{stem}.transcript.md"));
     let clean_txt = output_dir.join(format!("{stem}.clean.txt"));
     let srt = output_dir.join(format!("{stem}.segments.srt"));
-    let segments_json = output_dir.join(format!("{stem}.segments.json"));
     let docx = output_dir.join(format!("{stem}.transcript.docx"));
-    let raw_json = output_dir.join(format!("{stem}.whispercpp.json"));
 
-    write_timestamped_txt(&txt, &transcript.segments)?;
-    write_markdown(&md, transcript, audio)?;
     write_clean_txt(&clean_txt, transcript)?;
     write_srt(&srt, &transcript.segments)?;
-    write_segments_json(&segments_json, transcript)?;
     write_docx(&docx, transcript, audio)?;
-    fs::write(
-        &raw_json,
-        serde_json::to_string_pretty(transcript).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-
-    let outputs = vec![txt, md, clean_txt, srt, segments_json, docx, raw_json];
+    let outputs = vec![srt, clean_txt, docx];
     println_outputs(&outputs);
     Ok(outputs)
 }
@@ -61,13 +48,7 @@ pub(super) fn write_selection_outputs(
     };
 
     let formats = if requested_formats.is_empty() {
-        vec![
-            "markdown".to_string(),
-            "txt".to_string(),
-            "srt".to_string(),
-            "json".to_string(),
-            "docx".to_string(),
-        ]
+        vec!["srt".to_string(), "txt".to_string(), "docx".to_string()]
     } else {
         requested_formats
             .iter()
@@ -78,30 +59,20 @@ pub(super) fn write_selection_outputs(
     let mut outputs = Vec::new();
     for format in formats {
         match format.as_str() {
-            "markdown" | "md" => {
-                let path = output_dir.join(format!("{stem}.selection.md"));
-                write_markdown(&path, &transcript, audio)?;
-                outputs.push(output_file("Sélection Markdown", &path));
-            }
             "txt" | "text" => {
                 let path = output_dir.join(format!("{stem}.selection.txt"));
                 write_clean_txt(&path, &transcript)?;
-                outputs.push(output_file("Sélection TXT", &path));
+                outputs.push(output_file("Sélection texte propre", &path));
             }
             "srt" => {
                 let path = output_dir.join(format!("{stem}.selection.srt"));
                 write_srt(&path, &transcript.segments)?;
                 outputs.push(output_file("Sélection SRT", &path));
             }
-            "json" => {
-                let path = output_dir.join(format!("{stem}.selection.json"));
-                write_segments_json(&path, &transcript)?;
-                outputs.push(output_file("Sélection JSON", &path));
-            }
             "docx" => {
                 let path = output_dir.join(format!("{stem}.selection.docx"));
                 write_docx(&path, &transcript, audio)?;
-                outputs.push(output_file("Sélection DOCX", &path));
+                outputs.push(output_file("Sélection Word", &path));
             }
             _ => {}
         }
@@ -132,40 +103,6 @@ pub(super) fn refreshed_transcript(
     transcript
 }
 
-fn write_timestamped_txt(path: &Path, segments: &[TranscriptSegment]) -> Result<(), String> {
-    let mut content = String::new();
-    for segment in segments {
-        content.push_str(&format!(
-            "[{} - {}] {}\n\n",
-            format_ts(segment.start, "."),
-            format_ts(segment.end, "."),
-            segment.text
-        ));
-    }
-    fs::write(path, content).map_err(|error| error.to_string())
-}
-
-fn write_markdown(path: &Path, transcript: &NativeTranscript, source: &Path) -> Result<(), String> {
-    let mut content = format!(
-        "# Transcription\n\nSource: `{}`\n\nBackend: `{}`\n\nModèle: `{}`\n\n",
-        source
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("audio"),
-        transcript.backend,
-        transcript.model,
-    );
-    for segment in &transcript.segments {
-        content.push_str(&format!(
-            "`{} - {}`\n\n{}\n\n",
-            format_ts(segment.start, "."),
-            format_ts(segment.end, "."),
-            segment.text
-        ));
-    }
-    fs::write(path, content).map_err(|error| error.to_string())
-}
-
 fn write_clean_txt(path: &Path, transcript: &NativeTranscript) -> Result<(), String> {
     fs::write(path, transcript.text.trim()).map_err(|error| error.to_string())
 }
@@ -182,14 +119,6 @@ fn write_srt(path: &Path, segments: &[TranscriptSegment]) -> Result<(), String> 
         ));
     }
     fs::write(path, content).map_err(|error| error.to_string())
-}
-
-fn write_segments_json(path: &Path, transcript: &NativeTranscript) -> Result<(), String> {
-    fs::write(
-        path,
-        serde_json::to_string_pretty(transcript).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
 }
 
 fn write_docx(path: &Path, transcript: &NativeTranscript, source: &Path) -> Result<(), String> {
@@ -278,13 +207,6 @@ pub(super) fn document_xml(transcript: &NativeTranscript, source: &Path) -> Stri
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("audio")
-        ),
-        false,
-    ));
-    body.push_str(&docx_paragraph(
-        &format!(
-            "Backend: {} | Modèle: {}",
-            transcript.backend, transcript.model
         ),
         false,
     ));

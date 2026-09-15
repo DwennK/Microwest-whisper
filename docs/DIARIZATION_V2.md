@@ -25,15 +25,11 @@ Si la diarisation revient, elle doit produire des fichiers separes:
 - `*.speaker-segments.srt`
 - `*.diarized.json`
 
-Les exports existants restent inchanges:
+Les exports utilisateur existants restent inchanges:
 
-- `*.transcript.txt`
-- `*.transcript.md`
-- `*.clean.txt`
 - `*.segments.srt`
-- `*.segments.json`
+- `*.clean.txt`
 - `*.transcript.docx`
-- `*.whispercpp.json`
 
 ## Definition of Done
 

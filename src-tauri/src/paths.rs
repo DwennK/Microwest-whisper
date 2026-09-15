@@ -3,13 +3,9 @@ use sha1::{Digest, Sha1};
 use std::path::{Path, PathBuf};
 
 const OUTPUT_SUFFIXES: &[(&str, &str)] = &[
-    (".transcript.txt", "TXT"),
-    (".transcript.md", "Markdown"),
+    (".segments.srt", "Sous-titres SRT"),
     (".clean.txt", "Texte propre"),
-    (".segments.srt", "SRT"),
-    (".segments.json", "Segments JSON"),
-    (".transcript.docx", "DOCX"),
-    (".whispercpp.json", "whisper.cpp JSON"),
+    (".transcript.docx", "Document Word"),
 ];
 
 #[derive(Debug, Serialize)]

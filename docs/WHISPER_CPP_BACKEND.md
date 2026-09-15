@@ -11,15 +11,13 @@
 - L'execution surveille FFmpeg et `whisper-cli` avec annulation, timeout et messages d'erreur par composant.
 - Les WAV temporaires sont nettoyes automatiquement apres transcription, sauf si `MICROWEST_KEEP_TEMP_WAV=1`.
 - L'UI expose la plateforme et l'architecture detectees pour diagnostiquer les bundles natifs.
-- Les exports generes sont:
-  - `*.transcript.txt`
-  - `*.transcript.md`
-  - `*.clean.txt`
+- Les trois exports utilisateur generes sont:
   - `*.segments.srt`
-  - `*.segments.json`
+  - `*.clean.txt`
   - `*.transcript.docx`
-  - `*.whispercpp.json`
-- `transcription-history.jsonl`
+- Les anciens exports Markdown/JSON déjà présents sont conservés ; les corrections et nouvelles transcriptions écrivent uniquement les trois formats utilisateur. La réouverture privilégie le SRT courant, avec compatibilité des anciens JSON lorsqu’aucun SRT n’existe.
+- Les JSON bruts de whisper.cpp restent des fichiers de travail internes et ne sont pas copies dans le dossier de sortie.
+- L'historique technique est conserve dans `.microwest-history.jsonl`, masque dans le dossier de sortie sur macOS/Linux et absent de la liste des livrables.
 - La licence IA Swiss reste geree par `src-tauri/src/license.rs`.
 - L'UI ne montre plus les options de diarisation ou de renommage locuteurs.
 - L'UI permet de supprimer les modèles téléchargés.
