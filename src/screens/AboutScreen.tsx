@@ -1,5 +1,7 @@
+import appIcon from "../../assets/app-icon-small.png";
 import { Cpu, FolderOpen, HardDrive, Info } from "lucide-react";
 import { SectionTitle } from "../components/ui";
+import { modelLabel } from "../lib/preferences";
 import { formatBytes } from "../lib/format";
 import type { AppDiagnostics, EngineStatus, ModelInfo, ModelInventory, LicenseSnapshot } from "../types";
 
@@ -27,23 +29,25 @@ export function AboutScreen({
   onOpenPath,
 }: AboutScreenProps) {
   return (
-    <section className="screen two-column">
+    <section className="screen about-screen">
+      <header className="about-brand"><img src={appIcon} alt="" width={80} height={80} /><div><h2>Microwest Whisper</h2><p>Votre audio devient du texte, sur votre ordinateur.</p><span>Version {appInfo?.version ?? "détection…"}</span></div></header>
+      <div className="two-column">
       <div className="primary-panel">
-        <SectionTitle icon={<Info size={20} />} title="À propos" />
+        <SectionTitle icon={<Info size={20} />} title="Application" />
         <dl className="details">
           <div>
             <dt>Application</dt>
             <dd>{appInfo ? `${appInfo.name} ${appInfo.version}` : "Microwest Whisper"}</dd>
           </div>
           <div>
-            <dt>Backend</dt>
+            <dt>Moteur de transcription</dt>
             <dd>{appInfo?.backend ?? engine?.backend ?? "whisper.cpp"}</dd>
           </div>
           <div>
             <dt>Modèle actif</dt>
             <dd>
               {selectedModel
-                ? `${selectedModel.label} · ${selectedModel.installed ? selectedModel.source : "non installé"}`
+                ? `${modelLabel(selectedModel.id)} · ${selectedModel.installed ? "installé" : "non installé"}`
                 : engine?.default_model ?? "non détecté"}
             </dd>
           </div>
@@ -53,14 +57,14 @@ export function AboutScreen({
           </div>
           <div>
             <dt>Licence</dt>
-            <dd>{licenseOk ? "active" : license?.status_text ?? "à vérifier"}</dd>
+            <dd>{license?.state.development_mode === true ? "Mode développement" : licenseOk ? "active" : license?.status_text ?? "à vérifier"}</dd>
           </div>
           <div>
-            <dt>Updater</dt>
+            <dt>Mises à jour</dt>
             <dd>{appInfo?.update_endpoint ?? "GitHub Releases"}</dd>
           </div>
           <div>
-            <dt>Contrôle release</dt>
+            <dt>Vérification des versions</dt>
             <dd>Signatures Tauri + SHA256SUMS.txt sur GitHub Releases</dd>
           </div>
         </dl>
@@ -107,6 +111,7 @@ export function AboutScreen({
             Moteur
           </button>
         </div>
+      </div>
       </div>
     </section>
   );

@@ -3,5 +3,12 @@
   "identifier": "default",
   "description": "Default permissions for Microwest Whisper",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "opener:default", "process:default", "updater:default"]
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "opener:default",
+    "opener:allow-open-path",
+    "process:default",
+    "updater:default"
+  ]
 }

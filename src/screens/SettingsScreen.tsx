@@ -1,6 +1,6 @@
 import { Download, FolderOpen, History, Loader2, Play, Settings2, Trash2 } from "lucide-react";
 import { NumberField, SectionTitle, Select, Toggle } from "../components/ui";
-import { audioFilterOptions, deviceOptions, languageOptions, modelOptions, type TranscriptionSettings } from "../lib/preferences";
+import { audioFilterOptions, deviceOptions, languageOptions, modelOptions, languageLabel, modelLabel, audioFilterLabel, deviceLabel, type TranscriptionSettings } from "../lib/preferences";
 import type { EngineStatus, ModelInfo, ModelInventory } from "../types";
 
 interface SettingsScreenProps {
@@ -19,6 +19,8 @@ interface SettingsScreenProps {
   onDeleteModels: () => void;
   onOpenPath: (path: string) => void;
   onStart: () => void;
+  onBack: () => void;
+  locked: boolean;
 }
 
 export function SettingsScreen({
@@ -37,27 +39,31 @@ export function SettingsScreen({
   onDeleteModels,
   onOpenPath,
   onStart,
+  onBack,
+  locked,
 }: SettingsScreenProps) {
   return (
-    <section className="screen settings-grid">
+    <section className="screen settings-screen">
+      <div className="settings-intro"><p>Ces réglages sont conservés pour vos prochaines transcriptions.</p><button type="button" onClick={onBack}>Retour au fichier</button></div>
+      {locked && <p className="inline-status" role="status">Les réglages seront disponibles à la fin du traitement en cours.</p>}
+      <fieldset className="settings-grid plain-fieldset" disabled={locked}>
       <div className="primary-panel">
-        <SectionTitle icon={<Settings2 size={20} />} title="Paramètres transcription" />
+        <SectionTitle icon={<Settings2 size={20} />} title="Paramètres de transcription" />
         <div className="form-grid">
-          <Select label="Modèle" value={settings.model} onChange={(model) => onSettingsChange({ ...settings, model })} options={[...modelOptions]} />
+          <Select label="Modèle" value={settings.model} onChange={(model) => onSettingsChange({ ...settings, model })} options={[...modelOptions]} optionLabel={modelLabel} />
           <Select
             label="Langue"
             value={settings.language}
             onChange={(language) => onSettingsChange({ ...settings, language })}
-            options={[...languageOptions]}
+            options={[...languageOptions]} optionLabel={languageLabel}
           />
-          <Select label="Backend" value="whisper.cpp" disabled onChange={() => undefined} options={["whisper.cpp"]} />
-          <Select label="Filtre audio" value={settings.audio_filter} onChange={(audio_filter) => onSettingsChange({ ...settings, audio_filter })} options={[...audioFilterOptions]} />
-          <NumberField label="Threads CPU (0 = auto)" value={settings.threads} min={0} max={64} onChange={(threads) => onSettingsChange({ ...settings, threads })} />
-          <Select label="Device" value={settings.device} onChange={(device) => onSettingsChange({ ...settings, device })} options={[...deviceOptions]} />
+          <Select label="Filtre audio" value={settings.audio_filter} onChange={(audio_filter) => onSettingsChange({ ...settings, audio_filter })} options={[...audioFilterOptions]} optionLabel={audioFilterLabel} />
+          <NumberField label="Cœurs de calcul (0 = automatique)" value={settings.threads} min={0} max={64} onChange={(threads) => onSettingsChange({ ...settings, threads })} />
+          <Select label="Calcul" value={settings.device} onChange={(device) => onSettingsChange({ ...settings, device })} options={[...deviceOptions]} optionLabel={deviceLabel} />
         </div>
         <div className="toggle-grid">
-          <Toggle label="Nettoyer silences" checked={settings.trim_silence} onChange={(trim_silence) => onSettingsChange({ ...settings, trim_silence })} />
-          <Toggle label="Forcer recalcul" checked={settings.force} onChange={(force) => onSettingsChange({ ...settings, force })} />
+          <Toggle label="Réduire les silences" checked={settings.trim_silence} onChange={(trim_silence) => onSettingsChange({ ...settings, trim_silence })} />
+          <Toggle label="Recalculer les résultats existants" checked={settings.force} onChange={(force) => onSettingsChange({ ...settings, force })} />
         </div>
         <div className="action-row">
           <button className="primary" type="button" disabled={!canStart} onClick={onStart}>
@@ -78,7 +84,7 @@ export function SettingsScreen({
         )}
         <dl className="details engine-details">
           <div>
-            <dt>Backend</dt>
+            <dt>Moteur</dt>
             <dd>{engine?.backend ?? "whisper.cpp"}</dd>
           </div>
           <div>
@@ -86,22 +92,10 @@ export function SettingsScreen({
             <dd>{engine ? `${engine.platform} · ${engine.architecture}` : "détection..."}</dd>
           </div>
           <div>
-            <dt>whisper-cli</dt>
-            <dd>{engine?.whisper_cli || "non détecté"}</dd>
-          </div>
-          <div>
-            <dt>FFmpeg</dt>
-            <dd>{engine?.ffmpeg || "non détecté"}</dd>
-          </div>
-          <div>
-            <dt>Modèle</dt>
-            <dd>{engine?.model_path || "non détecté"}</dd>
-          </div>
-          <div>
             <dt>Modèle sélectionné</dt>
             <dd>
               {selectedModel
-                ? `${selectedModel.label} · ${selectedModel.installed ? `installé (${selectedModel.source})` : `à télécharger (${selectedModel.size_label})`}`
+                ? `${modelLabel(selectedModel.id)} · ${selectedModel.installed ? "installé" : `à télécharger (${selectedModel.size_label})`}`
                 : "non détecté"}
             </dd>
           </div>
@@ -133,6 +127,7 @@ export function SettingsScreen({
           </div>
         )}
       </div>
+      </fieldset>
     </section>
   );
 }

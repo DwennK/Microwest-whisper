@@ -23,11 +23,13 @@ export function Select({
   value,
   options,
   disabled = false,
+  optionLabel = (option) => option,
   onChange,
 }: {
   label: string;
   value: string;
   options: string[];
+  optionLabel?: (value: string) => string;
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
@@ -37,7 +39,7 @@ export function Select({
       <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {optionLabel(option)}
           </option>
         ))}
       </select>

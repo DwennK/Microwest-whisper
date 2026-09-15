@@ -101,3 +101,14 @@ export const preferenceStorageKeys = {
   settings: SETTINGS_KEY,
   outputDirectory: OUTPUT_DIRECTORY_KEY,
 } as const;
+
+const languageLabels: Record<string, string> = {
+  auto: "Détection automatique", fr: "Français", en: "Anglais", de: "Allemand",
+  it: "Italien", es: "Espagnol", pt: "Portugais", nl: "Néerlandais", pl: "Polonais",
+  uk: "Ukrainien", ar: "Arabe", zh: "Chinois", ja: "Japonais", ko: "Coréen",
+};
+export const languageLabel = (value: string) => languageLabels[value] ?? value;
+export const modelLabel = (value: string) => value === "large-v3-turbo-q8_0"
+  ? "Whisper large v3 turbo · Q8" : value === "large-v3-turbo-q5_0" ? "Whisper large v3 turbo · Q5" : value;
+export const audioFilterLabel = (value: string) => ({ loudnorm: "Normaliser le volume", "voice-clean": "Nettoyer la voix", none: "Aucun filtre" })[value] ?? value;
+export const deviceLabel = (value: string) => value === "auto" ? "Automatique" : "Processeur uniquement";

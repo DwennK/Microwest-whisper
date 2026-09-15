@@ -27,14 +27,8 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 - Lecteur audio synchronisé: clic sur un timestamp, lecture/pause et sauts clavier de 5 secondes.
 - Préférences de transcription et dossier de sortie conservés localement.
 - Aperçu SRT et export dédié des segments sélectionnés.
-- Exports générés:
-  - Markdown;
-  - TXT propre;
-  - SRT;
-  - DOCX;
-  - segments JSON;
-  - JSON brut `whisper.cpp`;
-  - historique JSONL.
+- Trois exports utilisateur : sous-titres SRT, texte propre et document Word.
+- Historique technique conservé dans un fichier masqué ; anciens exports conservés.
 
 ## Diarisation
 
@@ -83,6 +77,20 @@ Lancer l'app en développement:
 ```bash
 npm run dev
 ```
+
+### Tester sans licence en développement
+
+```bash
+MICROWEST_LICENSE_BYPASS=1 npm run dev
+```
+
+L’interface affiche **Mode développement**. Cette option ne fonctionne que dans les builds Rust avec `debug_assertions` (développement/debug). Elle ne contacte pas l’API licence et n’enregistre aucune licence. Les builds de production ignorent cette variable. Relancer sans cette variable pour tester le parcours normal d’activation.
+
+### Parcours de transcription
+
+Choisir un fichier dans **Audio**, puis cliquer sur **Transcrire**. Les **Réglages** restent accessibles dans la barre latérale et depuis l’écran Audio ; les préférences précédentes sont conservées. Un modèle manquant peut être téléchargé directement depuis Audio.
+
+L’écran **Résultats** rassemble le lecteur, la recherche et la correction du texte. **Enregistrer les corrections** met à jour les fichiers complets ; **Exporter la sélection** génère des fichiers séparés pour les passages choisis. Changer de fichier ou de dossier avec des corrections en attente propose de les enregistrer, de les abandonner ou de rester.
 
 ## Backend whisper.cpp
 

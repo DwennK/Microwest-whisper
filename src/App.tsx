@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import appIcon from "../assets/app-icon-small.png";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -6,7 +7,8 @@ import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
-import { CircleAlert, Loader2, RefreshCw } from "lucide-react";
+import { AudioLines, FileAudio, FileText, CircleAlert, Info, Loader2, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
+import { UnsavedChangesDialog } from "./components/UnsavedChangesDialog";
 import { StatusPill } from "./components/ui";
 import { useLicense } from "./hooks/useLicense";
 import { useModels } from "./hooks/useModels";
@@ -35,7 +37,7 @@ import type {
   TranscriptionRequest,
 } from "./types";
 
-const steps = ["Licence", "Audio", "Réglages", "Progression", "Résultats", "À propos"] as const;
+const steps = ["Licence", "Audio", "Réglages", "Transcription", "Résultats", "À propos"] as const;
 const audioExtensions = ["m4a", "mp3", "mp4", "mpeg", "mpga", "wav", "webm", "flac", "ogg"];
 
 const stageSteps = [
@@ -48,7 +50,12 @@ const stageSteps = [
 ];
 
 function App() {
-  const [activeStep, setActiveStep] = useState(0);
+  const [activeStep, setActiveStep] = useState(1);
+  const [booting, setBooting] = useState(true);
+  const [eventsReady, setEventsReady] = useState(false);
+  const [pendingChange, setPendingChange] = useState<(() => void | Promise<void>) | null>(null);
+  const [changeBusy, setChangeBusy] = useState(false);
+  const changeLock = useRef(false);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [appInfo, setAppInfo] = useState<AppDiagnostics | null>(null);
   const [settings, setSettings] = useState(loadTranscriptionSettings);
@@ -86,6 +93,9 @@ function App() {
   } = useModels(settings.model);
 
   const {
+    loading,
+    loadError,
+    outputBusy,
     audioPath,
     setAudioPath,
     outputDir,
@@ -93,7 +103,6 @@ function App() {
     workDir,
     setWorkDir,
     outputs,
-    quickOutputs,
     selectionOutputs,
     preview,
     segments,
@@ -145,11 +154,15 @@ function App() {
     onFailed: setError,
   });
 
-  const canStart = Boolean(engine?.can_run && selectedModelReady && licenseOk && audioPath && outputDir && !transcription.running && !modelBusy);
+  const canStart = Boolean(engine?.can_run && selectedModelReady && licenseOk && audioPath && outputDir && !transcription.running && !modelBusy && !loading && !outputBusy && !booting && eventsReady && !changeBusy);
   const startDisabledReason = (() => {
+    if (booting) return "Préparation de l’application…";
+    if (!eventsReady) return "Connexion au suivi du traitement…";
+    if (loading) return "Chargement du fichier…";
+    if (outputBusy) return "Enregistrement en cours…";
     if (!licenseOk) return "Licence requise avant de lancer.";
-    if (!engine?.can_run) return engine?.message ?? "Backend incomplet.";
-    if (!selectedModelReady) return "Téléchargez le modèle sélectionné dans Réglages.";
+    if (!selectedModelReady) return "Téléchargez le modèle sélectionné pour commencer.";
+    if (!engine?.can_run) return engine?.message ?? "Moteur incomplet.";
     if (!audioPath) return "Choisissez un fichier audio.";
     if (!outputDir) return "Choisissez un dossier de sortie.";
     if (transcription.running) return "Transcription déjà en cours.";
@@ -176,11 +189,11 @@ function App() {
         await handleRefreshHistory(preferredOutputDir);
         const validation = await invoke<LicenseCheck>("validate_license", { forceOnline: false });
         applyLicenseCheck(validation);
-        if (validation.ok) {
-          setActiveStep(1);
-        }
+        setActiveStep(validation.ok ? 1 : 0);
       } catch (bootError) {
         setError(String(bootError));
+      } finally {
+        setBooting(false);
       }
     };
 
@@ -221,27 +234,30 @@ function App() {
     };
   }, [audioPath]);
 
+  // Keep one subscription so navigation and output changes cannot drop events.
+  const eventHandlers = useRef({ transcription: transcription.handleEngineEvent, model: handleModelDownloadEvent });
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let unlistenModel: (() => void) | undefined;
-
-    listen<TranscriptionEvent>("transcription-event", (event) => transcription.handleEngineEvent(event.payload)).then((dispose) => {
-      unlisten = dispose;
-    });
-    listen<ModelDownloadEvent>("model-download-event", (event) => handleModelDownloadEvent(event.payload)).then((dispose) => {
-      unlistenModel = dispose;
-    });
-
-    return () => {
-      unlisten?.();
-      unlistenModel?.();
+    eventHandlers.current = { transcription: transcription.handleEngineEvent, model: handleModelDownloadEvent };
+  });
+  useEffect(() => {
+    let disposed = false;
+    const disposers: (() => void)[] = [];
+    const register = async () => {
+      let registered = 0;
+      for (const [name, callback] of [
+        ["transcription-event", (event: { payload: TranscriptionEvent }) => eventHandlers.current.transcription(event.payload)],
+        ["model-download-event", (event: { payload: ModelDownloadEvent }) => eventHandlers.current.model(event.payload)],
+      ] as const) {
+        try {
+          const stop = await listen(name, callback as (event: { payload: unknown }) => void);
+          if (disposed) stop(); else { disposers.push(stop); registered++; }
+        } catch (error) { if (!disposed) setError(`Suivi du traitement indisponible : ${String(error)}`); }
+      }
+      if (!disposed) setEventsReady(registered === 2);
     };
-  }, [handleModelDownloadEvent, transcription.handleEngineEvent]);
-
-  useEffect(() => {
-    if (!audioPath || !outputDir) return;
-    void handleRefreshOutputs(audioPath, outputDir);
-  }, [audioPath, outputDir, handleRefreshOutputs]);
+    void register();
+    return () => { disposed = true; disposers.forEach((stop) => stop()); };
+  }, []);
 
   const refreshEngineAndModels = useCallback(async () => {
     const [engineStatus, modelState] = await Promise.all([
@@ -252,22 +268,52 @@ function App() {
     hydrateModels(modelState);
   }, [hydrateModels]);
 
-  async function chooseAudio() {
-    const selected = await openDialog({
-      multiple: false,
-      filters: [{ name: "Audio", extensions: audioExtensions }],
-    });
-    if (typeof selected === "string") {
-      setAudioPath(selected);
+  const controlsLocked = transcription.running || outputBusy || changeBusy || loading;
+
+  async function runChange(action: () => void | Promise<void>, save = false) {
+    if (changeLock.current) return;
+    changeLock.current = true;
+    setChangeBusy(true);
+    setError("");
+    try {
+      if (save) await saveTranscriptEdits();
+      await action();
+      setPendingChange(null);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      changeLock.current = false;
+      setChangeBusy(false);
     }
   }
 
+  function requestChange(action: () => void | Promise<void>) {
+    if (controlsLocked || pendingChange) return;
+    if (hasSegmentEdits) setPendingChange(() => action);
+    else void runChange(action);
+  }
+
+  async function replaceSource(audio: string, dir: string) {
+    transcription.resetTranscription();
+    setAudioPath(audio);
+    setOutputDir(dir);
+    await Promise.all([refreshOutputs(audio, dir), handleRefreshHistory(dir)]);
+  }
+
+  async function chooseAudio() {
+    if (controlsLocked) return;
+    try {
+      const selected = await openDialog({ multiple: false, filters: [{ name: "Audio", extensions: audioExtensions }] });
+      if (typeof selected === "string" && selected !== audioPath) requestChange(() => replaceSource(selected, outputDir));
+    } catch (error) { setError(`Sélection impossible : ${String(error)}`); }
+  }
+
   async function chooseOutputDir() {
-    const selected = await openDialog({ directory: true, multiple: false });
-    if (typeof selected === "string") {
-      setOutputDir(selected);
-      await handleRefreshHistory(selected);
-    }
+    if (controlsLocked) return;
+    try {
+      const selected = await openDialog({ directory: true, multiple: false });
+      if (typeof selected === "string" && selected !== outputDir) requestChange(() => replaceSource(audioPath, selected));
+    } catch (error) { setError(`Sélection impossible : ${String(error)}`); }
   }
 
   async function handleActivateLicense() {
@@ -290,6 +336,7 @@ function App() {
   }
 
   async function handleDownloadSelectedModel() {
+    if (transcription.running || modelBusy) return;
     setError("");
     try {
       await downloadSelectedModel();
@@ -300,6 +347,7 @@ function App() {
   }
 
   async function handleDeleteModels() {
+    if (transcription.running || modelBusy) return;
     setError("");
     try {
       await deleteModels();
@@ -356,20 +404,12 @@ function App() {
     }
   }
 
-  async function startTranscription() {
+  function startTranscription() {
     if (!canStart) return;
-    setError("");
-    const request: TranscriptionRequest = {
-      ...settings,
-      audio_path: audioPath,
-      output_dir: outputDir,
-      work_dir: workDir,
-    };
-    try {
+    const request: TranscriptionRequest = { ...settings, audio_path: audioPath, output_dir: outputDir, work_dir: workDir };
+    requestChange(async () => {
       await transcription.startTranscription(request);
-    } catch (startError) {
-      setError(String(startError));
-    }
+    });
   }
 
   async function cancelTranscription() {
@@ -387,6 +427,28 @@ function App() {
       setResultMessage("Contenu copié.");
     } catch (copyError) {
       setError(`Copie impossible: ${String(copyError)}`);
+    }
+  }
+
+  async function handleOpenPath(path: string) {
+    if (!path.trim()) return;
+    setError("");
+    try {
+      await openPath(path);
+      setResultMessage("Fichier ouvert dans l’application par défaut.");
+    } catch (openError) {
+      setError(`Ouverture impossible: ${String(openError)}`);
+    }
+  }
+
+  async function handleRevealPath(path: string) {
+    if (!path.trim()) return;
+    setError("");
+    try {
+      await revealItemInDir(path);
+      setResultMessage("Fichier affiché dans son dossier.");
+    } catch (revealError) {
+      setError(`Affichage dans le dossier impossible: ${String(revealError)}`);
     }
   }
 
@@ -408,7 +470,13 @@ function App() {
     }
   }
 
+  function navigateToStep(step: number) {
+    setError("");
+    setActiveStep(step);
+  }
+
   const activeScreen = (() => {
+    if (booting) return <div className="screen loading-state" role="status"><Loader2 className="spin" />Préparation de l’application…</div>;
     if (activeStep === 0) {
       return (
         <LicenseScreen
@@ -420,7 +488,7 @@ function App() {
           onLicenseKeyChange={setLicenseKey}
           onActivate={handleActivateLicense}
           onValidateOnline={handleValidateLicenseOnline}
-          onContinue={() => setActiveStep(1)}
+          onContinue={() => navigateToStep(1)}
         />
       );
     }
@@ -433,8 +501,20 @@ function App() {
           engine={engine}
           onChooseAudio={chooseAudio}
           onChooseOutputDir={chooseOutputDir}
-          onRevealAudio={revealItemInDir}
-          onContinue={() => setActiveStep(2)}
+          onRevealAudio={handleRevealPath}
+          language={settings.language}
+          model={settings.model}
+          selectedModel={selectedModel}
+          modelReady={selectedModelReady}
+          modelBusy={modelBusy}
+          modelProgress={modelProgress}
+          modelMessage={modelMessage}
+          locked={controlsLocked}
+          canStart={canStart}
+          disabledReason={startDisabledReason}
+          onSettings={() => navigateToStep(2)}
+          onDownload={handleDownloadSelectedModel}
+          onStart={startTranscription}
         />
       );
     }
@@ -452,10 +532,12 @@ function App() {
           selectedModelReady={selectedModelReady}
           canStart={canStart}
           startDisabledReason={startDisabledReason}
+          locked={transcription.running || modelBusy}
+          onBack={() => navigateToStep(1)}
           onSettingsChange={setSettings}
           onDownloadModel={handleDownloadSelectedModel}
           onDeleteModels={handleDeleteModels}
-          onOpenPath={openPath}
+          onOpenPath={handleOpenPath}
           onStart={startTranscription}
         />
       );
@@ -464,6 +546,8 @@ function App() {
     if (activeStep === 3) {
       return (
         <ProgressScreen
+          audioPath={audioPath}
+          phase={transcription.phase}
           running={transcription.running}
           canStart={canStart}
           disabledReason={startDisabledReason}
@@ -476,19 +560,25 @@ function App() {
           stageSteps={stageSteps}
           onStart={startTranscription}
           onCancel={cancelTranscription}
+          onAudio={() => navigateToStep(1)}
+          onResults={() => navigateToStep(4)}
           onToggleLogs={() => transcription.setShowLogs((value) => !value)}
         />
       );
     }
 
     if (activeStep === 4) {
+      if (loading) return <div className="screen loading-state" role="status"><Loader2 className="spin" />Chargement de la transcription…</div>;
+      if (loadError) return <div className="screen"><p role="alert">{loadError}</p><button type="button" onClick={() => void refreshOutputs(audioPath, outputDir)}>Réessayer le chargement</button></div>;
       return (
         <ResultsScreen
+          key={`${audioPath}|${outputDir}`}
+          busy={outputBusy || transcription.running || changeBusy}
+          resultError={error}
           audioPath={audioPath}
           audioSource={audioSource}
           audioPlaybackMessage={audioPlaybackMessage}
           outputs={outputs}
-          quickOutputs={quickOutputs}
           selectionOutputs={selectionOutputs}
           preview={preview}
           segments={segments}
@@ -499,16 +589,17 @@ function App() {
           history={history}
           resultMessage={resultMessage}
           outputDir={outputDir}
-          onOpenPath={openPath}
+          onOpenPath={handleOpenPath}
+          onRevealPath={handleRevealPath}
           onCopyText={copyText}
           onExportSelection={handleExportSelectedSegments}
           onSaveFullTranscript={handleSaveTranscriptEdits}
           onToggleSegment={toggleSegment}
           onSetVisibleSegments={setAllSegments}
           onUpdateSegment={updateSegment}
+          onAudio={() => navigateToStep(1)}
           onLoadHistoryRecord={(sourceAudio, dir) => {
-            setAudioPath(sourceAudio);
-            void handleRefreshOutputs(sourceAudio, dir);
+            if (sourceAudio !== audioPath || dir !== outputDir) requestChange(() => replaceSource(sourceAudio, dir));
           }}
         />
       );
@@ -524,7 +615,7 @@ function App() {
         licenseOk={licenseOk}
         outputDir={outputDir}
         workDir={workDir}
-        onOpenPath={openPath}
+        onOpenPath={handleOpenPath}
       />
     );
   })();
@@ -533,36 +624,38 @@ function App() {
     <main className="app-shell">
       <aside className="rail">
         <div className="brand">
-          <div className="brand-mark">MW</div>
+          <img className="brand-icon" src={appIcon} alt="" width={46} height={46} />
           <div>
-            <strong>Microwest Whisper</strong>
-            <span>Desktop</span>
+            <strong>Microwest <span className="brand-product">Whisper</span></strong>
+            <span>Transcription locale</span>
           </div>
         </div>
 
-        <nav className="steps">
-          {steps.map((step, index) => {
-            const stepIndex = index;
-            return (
-              <button
-                key={step}
-                className={stepIndex === activeStep ? "step is-active" : "step"}
-                type="button"
-                onClick={() => setActiveStep(stepIndex)}
-              >
-                <span>{index + 1}</span>
-                {step}
-              </button>
-            );
-          })}
+        <p className="rail-label">Votre espace</p>
+        <nav className="steps" aria-label="Étapes de transcription">
+          {[1, 3, 4].map((stepIndex, index) => (
+            <button key={stepIndex} className={stepIndex === activeStep ? "step is-active" : "step"}
+              type="button" aria-current={stepIndex === activeStep ? "step" : undefined}
+              disabled={booting} onClick={() => navigateToStep(stepIndex)}>
+              {stepIndex === 1 ? <FileAudio size={19} /> : stepIndex === 3 ? <AudioLines size={19} /> : <FileText size={19} />}
+              <span className="step-number">{index + 1}</span><span className="step-name">{steps[stepIndex]}</span>
+            </button>
+          ))}
+        </nav>
+        <nav className="secondary-nav" aria-label="Application">
+          {([{ step: 2, icon: Settings2 }, { step: 0, icon: ShieldCheck }, { step: 5, icon: Info }]).map(({ step, icon: Icon }) => (
+            <button key={step} type="button" className={activeStep === step ? "step is-active" : "step"}
+              aria-current={activeStep === step ? "page" : undefined} disabled={booting} onClick={() => navigateToStep(step)}>
+              <Icon size={17} />{steps[step]}
+            </button>
+          ))}
         </nav>
 
         <div className="engine-box">
           <span className={engine?.can_run ? "dot ok" : "dot warn"} />
           <div>
             <strong>{engine?.can_run ? "Moteur prêt" : "Moteur à vérifier"}</strong>
-            <p>{engine?.message ?? "Chargement du moteur..."}</p>
-            {engine && <small>{engine.backend}</small>}
+            <p>{transcription.running ? "Transcription en cours" : selectedModelReady ? "Transcription sur cet ordinateur" : "Modèle à télécharger"}</p>
           </div>
         </div>
       </aside>
@@ -570,15 +663,13 @@ function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Transcription locale</p>
-            <h1>{steps[activeStep]}</h1>
+            <p className="eyebrow">Microwest Whisper</p>
+            <h1>{booting ? "Bienvenue" : steps[activeStep]}</h1>
           </div>
           <div className="status-area">
             <div className="status-strip">
-              <StatusPill ok={licenseOk} label={licenseOk ? "Licence active" : "Licence requise"} />
-              <StatusPill ok={Boolean(engine?.can_run)} label={engine?.can_run ? "whisper.cpp prêt" : "Backend incomplet"} />
-              <StatusPill ok={selectedModelReady} label={selectedModelReady ? "Modèle prêt" : "Modèle requis"} />
-              <button className="update-button" type="button" disabled={updateBusy} onClick={checkForUpdates}>
+              <StatusPill ok={licenseOk} label={license?.state.development_mode === true ? "Mode développement" : licenseOk ? "Licence active" : "Licence requise"} />
+              <button className="update-button" type="button" disabled={updateBusy || transcription.running || outputBusy || loading || changeBusy || hasSegmentEdits} onClick={checkForUpdates}>
                 {updateBusy ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
                 Mise à jour
               </button>
@@ -593,13 +684,18 @@ function App() {
         </header>
 
         {error && (
-          <div className="notice error">
+          <div className="notice error" role="alert">
             <CircleAlert size={18} />
             <span>{error}</span>
+            <button className="notice-dismiss" type="button" aria-label="Fermer le message d’erreur" onClick={() => setError("")}>
+              <X size={16} />
+            </button>
           </div>
         )}
 
         {activeScreen}
+        {pendingChange && <UnsavedChangesDialog error={error} busy={changeBusy} onStay={() => setPendingChange(null)}
+          onDiscard={() => void runChange(pendingChange)} onSave={() => void runChange(pendingChange, true)} /> }
       </section>
     </main>
   );
