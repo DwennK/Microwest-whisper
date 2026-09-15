@@ -80,7 +80,7 @@ Pour verifier une plateforme depuis une autre machine:
 MICROWEST_BUNDLE_PLATFORM=windows-x86_64 npm run prepare:whispercpp
 ```
 
-Sur Windows, `whisper-cli.exe` doit etre accompagne des DLLs fournies par le paquet `whisper.cpp` (`whisper.dll`, `ggml*.dll`, etc.).
+Depuis whisper.cpp 1.9.4, `whisper-cli` est compilé depuis les sources vérifiées sur chaque plateforme. Les bibliothèques whisper/ggml sont liées statiquement ; les anciennes DLLs whisper/ggml ne sont plus nécessaires. CMake et un compilateur C++ doivent être disponibles.
 
 ## Modeles telecharges
 
@@ -98,7 +98,7 @@ Nettoyage:
 
 ## Packaging restant
 
-- Les binaires `whisper-cli` et FFmpeg sont récupérés depuis des URLs et SHA-256 verrouillés dans `scripts/native-dependencies.json`.
+- Les sources de `whisper-cli` et les archives FFmpeg sont récupérées depuis des URLs et SHA-256 verrouillés dans `scripts/native-dependencies.json`.
 - Les licences et la configuration FFmpeg sont archivées dans les ressources packagées; une validation juridique des codecs GPL transitifs reste requise avant diffusion commerciale.
 - Valider les binaires `whisper-cli`/FFmpeg dans les bundles packagés.
 - Configurer les secrets exigés par le preflight pour signer/notariser macOS et signer Windows, puis valider Linux AppImage/deb/rpm.

@@ -2,27 +2,15 @@
   "manifest_version": 1,
   "components": {
     "whisper.cpp": {
-      "version": "v1.9.1",
+      "version": "v1.9.4",
       "license": {
         "spdx": "MIT",
-        "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.1/LICENSE"
+        "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE"
       },
       "artifacts": {
         "source": {
-          "url": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.1.tar.gz",
-          "sha256": "147267177eef7b22ec3d2476dd514d1b12e160e176230b740e3d1bd600118447"
-        },
-        "windows-x86_64": {
-          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip",
-          "sha256": "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
-        },
-        "linux-x86_64": {
-          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-ubuntu-x64.tar.gz",
-          "sha256": "f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5"
-        },
-        "linux-aarch64": {
-          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-ubuntu-arm64.tar.gz",
-          "sha256": "e0b66cd551ff6f2a28fabe3c6e89691eea037bb76833493abb9a71ca788994b3"
+          "url": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.4.tar.gz",
+          "sha256": "57e280cee375ab02425b806ad5146b99f6eb9357e3c2b31357c8a6af2e2e44ae"
         }
       }
     },
@@ -37,7 +25,9 @@
         "version3_spdx": "GPL-3.0-or-later",
         "url": "https://ffmpeg.org/legal.html",
         "required_build_flag": "--enable-gpl",
-        "forbidden_build_flags": ["--enable-nonfree"]
+        "forbidden_build_flags": [
+          "--enable-nonfree"
+        ]
       },
       "artifacts": {
         "macos-aarch64": {

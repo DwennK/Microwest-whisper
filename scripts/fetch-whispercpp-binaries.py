@@ -42,6 +42,11 @@ def main() -> None:
         "linux-aarch64",
     }:
         raise SystemExit(f"Unsupported platform: {target}")
+    if target != detect_platform():
+        raise SystemExit(
+            f"Build {target} on a matching host; source builds do not cross-compile "
+            f"from {detect_platform()}."
+        )
 
     with tempfile.TemporaryDirectory(prefix="microwest-whispercpp-") as tmp:
         tmp_dir = Path(tmp)
@@ -75,7 +80,7 @@ def verify_manifest(manifest: dict) -> None:
         raise SystemExit("Unsupported native dependency manifest version")
     components = manifest.get("components", {})
     required_artifacts = {
-        "whisper.cpp": {"source", "windows-x86_64", "linux-x86_64", "linux-aarch64"},
+        "whisper.cpp": {"source"},
         "imageio-ffmpeg": {"macos-aarch64", "macos-x86_64", "windows-x86_64", "linux-x86_64", "linux-aarch64"},
     }
     for name, required in required_artifacts.items():
@@ -112,19 +117,8 @@ def artifact(manifest: dict, component_name: str, artifact_name: str) -> dict:
 
 
 def fetch_whisper_cli(manifest: dict, target: str, target_dir: Path, tmp_dir: Path) -> None:
-    if target.startswith("macos-"):
-        build_macos_whisper_cli(manifest, target_dir, tmp_dir)
-        return
-    if target == "windows-x86_64":
-        fetch_windows_whisper_cli(manifest, target_dir, tmp_dir)
-        return
-    if target in {"linux-x86_64", "linux-aarch64"}:
-        fetch_linux_whisper_cli(manifest, target, target_dir, tmp_dir)
-        return
-    raise SystemExit(f"No whisper-cli fetcher for {target}")
-
-
-def build_macos_whisper_cli(manifest: dict, target_dir: Path, tmp_dir: Path) -> None:
+    # Build the same verified release on every OS; upstream does not publish
+    # prebuilt CLI assets for every release.
     whisper = component(manifest, "whisper.cpp")
     source = artifact(manifest, "whisper.cpp", "source")
     archive = tmp_dir / "whisper.cpp.tar.gz"
@@ -135,50 +129,33 @@ def build_macos_whisper_cli(manifest: dict, target_dir: Path, tmp_dir: Path) -> 
         safe_extract_tar(tar, tmp_dir)
 
     cmake = cmake_command()
-    run(
-        [
-            *cmake,
-            "-S",
-            str(source_dir),
-            "-B",
-            str(build_dir),
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DBUILD_SHARED_LIBS=OFF",
-            "-DWHISPER_BUILD_TESTS=OFF",
-            "-DWHISPER_BUILD_EXAMPLES=ON",
-            "-DWHISPER_BUILD_SERVER=OFF",
-            "-DGGML_METAL=ON",
+    options = [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DWHISPER_BUILD_TESTS=OFF",
+        "-DWHISPER_BUILD_EXAMPLES=ON",
+        "-DWHISPER_BUILD_SERVER=OFF",
+        "-DGGML_NATIVE=OFF",
+        "-DGGML_OPENMP=OFF",
+        f"-DGGML_METAL={'ON' if target.startswith('macos-') else 'OFF'}",
+    ]
+    if target.startswith("macos-"):
+        options += [
             "-DGGML_METAL_EMBED_LIBRARY=ON",
-        ],
-    )
-    run([*cmake, "--build", str(build_dir), "--config", "Release", "--target", "whisper-cli"])
-    install_executable(build_dir / "bin" / "whisper-cli", target_dir / "whisper-cli")
-
-
-def fetch_windows_whisper_cli(manifest: dict, target_dir: Path, tmp_dir: Path) -> None:
-    pinned = artifact(manifest, "whisper.cpp", "windows-x86_64")
-    archive = tmp_dir / "whisper-bin-x64.zip"
-    extract_dir = tmp_dir / "whisper-bin-x64"
-    download(pinned["url"], archive, pinned["sha256"])
-    with zipfile.ZipFile(archive) as zipped:
-        zipped.extractall(extract_dir)
-    release_dir = extract_dir / "Release"
-    install_executable(release_dir / "whisper-cli.exe", target_dir / "whisper-cli.exe")
-    for dll in release_dir.glob("*.dll"):
-        shutil.copy2(dll, target_dir / dll.name)
-
-
-def fetch_linux_whisper_cli(manifest: dict, target: str, target_dir: Path, tmp_dir: Path) -> None:
-    arch = "arm64" if target == "linux-aarch64" else "x64"
-    archive = tmp_dir / f"whisper-bin-ubuntu-{arch}.tar.gz"
-    extract_dir = tmp_dir / f"whisper-bin-ubuntu-{arch}"
-    pinned = artifact(manifest, "whisper.cpp", target)
-    download(pinned["url"], archive, pinned["sha256"])
-    with tarfile.open(archive, "r:gz") as tar:
-        safe_extract_tar(tar, tmp_dir)
-    install_executable(extract_dir / "whisper-cli", target_dir / "whisper-cli")
-    for library in extract_dir.glob("*.so*"):
-        shutil.copy2(library, target_dir / library.name)
+            f"-DCMAKE_OSX_ARCHITECTURES={'arm64' if target == 'macos-aarch64' else 'x86_64'}",
+        ]
+    elif target == "windows-x86_64":
+        options += ["-A", "x64"]
+    run([*cmake, "-S", str(source_dir), "-B", str(build_dir), *options])
+    run([
+        *cmake, "--build", str(build_dir), "--config", "Release",
+        "--target", "whisper-cli", "--parallel", str(min(os.cpu_count() or 2, 4)),
+    ])
+    filename = "whisper-cli.exe" if target.startswith("windows-") else "whisper-cli"
+    binary_dir = build_dir / "bin"
+    if target.startswith("windows-"):
+        binary_dir /= "Release"
+    install_executable(binary_dir / filename, target_dir / filename)
 
 
 def fetch_ffmpeg(manifest: dict, target: str, target_dir: Path, tmp_dir: Path) -> None:
@@ -201,8 +178,8 @@ def cmake_command() -> list[str]:
     if shutil.which("cmake"):
         return ["cmake"]
     raise SystemExit(
-        "CMake is required to build the pinned macOS whisper.cpp source. "
-        "Install it with Homebrew (`brew install cmake`) and retry."
+        "CMake and a C++ compiler are required to build the pinned whisper.cpp source. "
+        "Install CMake (macOS: `brew install cmake`) and retry."
     )
 
 

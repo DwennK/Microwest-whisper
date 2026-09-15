@@ -254,6 +254,8 @@ cargo check --manifest-path src-tauri/Cargo.toml
 npm run verify:native-manifest
 ```
 
+Le moteur whisper.cpp **1.9.4** est compilé depuis la même archive source vérifiée sur macOS, Windows et Linux. CMake et un compilateur C++ sont requis pour préparer les binaires (Xcode Command Line Tools sur macOS, Visual Studio C++ sur Windows, GCC/Clang sur Linux). Les bibliothèques whisper/ggml sont liées statiquement ; Metal reste activé sur macOS. FFmpeg reste fourni par imageio-ffmpeg 0.6.0, sa dernière version disponible.
+
 Les versions, URLs, SHA-256 et licences des archives `whisper.cpp` et imageio-ffmpeg sont verrouillés dans `scripts/native-dependencies.json`. Le téléchargement vérifie chaque hash avant extraction. Les notices sont intégrées aux ressources packagées via `engine/whispercpp/THIRD_PARTY_NOTICES.md` et la configuration de licence FFmpeg est archivée dans `FFMPEG_BUILD.txt` pour chaque plateforme.
 
 ## Documentation

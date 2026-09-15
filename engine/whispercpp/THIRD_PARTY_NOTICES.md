@@ -2,9 +2,9 @@
 
 The exact versions, download URLs, SHA-256 checksums and license identifiers used by the build are pinned in `native-dependencies.json`, which is bundled next to this notice.
 
-## whisper.cpp v1.9.1 — MIT
+## whisper.cpp v1.9.4 — MIT
 
-Source: https://github.com/ggml-org/whisper.cpp/tree/v1.9.1
+Source: https://github.com/ggml-org/whisper.cpp/tree/v1.9.4
 
 Copyright (c) 2023-2026 The ggml authors
 

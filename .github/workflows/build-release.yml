@@ -135,7 +135,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install CMake for pinned macOS source build
+      - name: Install CMake on macOS
         if: runner.os == 'macOS'
         run: brew install cmake
 
@@ -171,7 +171,10 @@ jobs:
             echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
           fi
 
-      - name: Fetch native whisper.cpp binaries
+      - name: Verify native build tools
+        run: cmake --version
+
+      - name: Build pinned whisper.cpp and fetch FFmpeg
         run: python scripts/fetch-whispercpp-binaries.py
 
       - name: Import Windows signing certificate
