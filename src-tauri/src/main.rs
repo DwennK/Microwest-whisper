@@ -1,4 +1,7 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod license;
+mod local_opener;
 mod model_assets;
 mod paths;
 mod transcription;
@@ -11,6 +14,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(transcription::TranscriptionState::default())
         .invoke_handler(tauri::generate_handler![
+            local_opener::open_local_path,
             license::read_license_state,
             license::activate_license,
             license::validate_license,

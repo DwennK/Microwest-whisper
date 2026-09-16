@@ -145,6 +145,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run build:release
 
+      - name: Verify Windows GUI subsystem
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = [IO.File]::ReadAllBytes('src-tauri/target/x86_64-pc-windows-msvc/release/microwest-whisper.exe')
+          $peOffset = [BitConverter]::ToInt32($binary, 0x3c)
+          $subsystem = [BitConverter]::ToUInt16($binary, $peOffset + 24 + 68)
+          if ($subsystem -ne 2) { throw "Expected Windows GUI subsystem (2), got $subsystem" }
+
       - name: Verify macOS architecture and ad-hoc signature
         if: runner.os == 'macOS'
         shell: bash

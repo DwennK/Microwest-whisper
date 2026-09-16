@@ -26,7 +26,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openPath: vi.fn(),
   revealItemInDir: vi.fn(),
 }));
 
@@ -171,6 +170,17 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Corriger" }));
     fireEvent.change(await screen.findByLabelText("Texte du segment 1"), { target: { value: "Texte corrigé" } });
   }
+
+  it("opens exports and their folder through the validated native command", async () => {
+    render(<App />);
+    await chooseFile();
+    navigate("Résultats");
+    fireEvent.click(await screen.findByRole("button", { name: "Exporter" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ouvrir Texte propre" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("open_local_path", { path: "/output/meeting.clean.txt", outputDir: "/output" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ouvrir le dossier" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("open_local_path", { path: "/output", outputDir: "/output" }));
+  });
   async function requestReplacement() {
     navigate("Audio");
     openMock.mockResolvedValue("/audio/other.wav");

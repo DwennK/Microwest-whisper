@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
@@ -434,7 +434,7 @@ function App() {
     if (!path.trim()) return;
     setError("");
     try {
-      await openPath(path);
+      await invoke("open_local_path", { path, outputDir });
       setResultMessage("Fichier ouvert dans l’application par défaut.");
     } catch (openError) {
       setError(`Ouverture impossible: ${String(openError)}`);

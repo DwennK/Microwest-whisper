@@ -901,6 +901,11 @@ fn run_logged_command(
     failure_context: &str,
 ) -> Result<(), String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW for FFmpeg and whisper-cli.
+    }
     let mut child = command
         .spawn()
         .map_err(|error| command_spawn_error(kind, failure_context, &error.to_string()))?;
