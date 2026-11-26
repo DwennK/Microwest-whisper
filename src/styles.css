@@ -147,6 +147,7 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .continue-button { min-height: 48px; min-width: 190px; font-size: 14px; border-radius: 12px; }
 .settings-intro { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
 .settings-intro p { font-size: 13px; }
+.interface-language { max-width: 28rem; margin-bottom: 20px; }
 .settings-intro button { flex: 0 0 auto; }
 .about-screen > .two-column { margin-bottom: 4px; }
 .about-brand { display: flex; align-items: center; gap: 22px; padding: 8px 0 30px; }

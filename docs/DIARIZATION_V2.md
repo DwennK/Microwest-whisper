@@ -2,7 +2,7 @@
 
 ## Statut
 
-La diarisation n'est pas incluse dans la version actuelle de Microwest Whisper. Les exports supportes restent bases sur des segments `whisper.cpp` sans locuteur.
+La diarisation n'est pas incluse dans la version actuelle de Microwest Whisper. Les exports supportes contiennent les segments horodatés de Parakeet Ultra sans étiquette de locuteur.
 
 Les fichiers locaux nommes `whisperx.json`, `speaker-turns.*` ou `speaker-segments.srt` dans `output/` ou `work/` sont des artefacts de prototypes historiques. Ils sont hors Git, hors contrat produit et ne doivent pas etre presentes comme une fonctionnalite livree.
 
@@ -10,7 +10,7 @@ Les fichiers locaux nommes `whisperx.json`, `speaker-turns.*` ou `speaker-segmen
 
 Ajouter une diarisation optionnelle sans casser le mode local simple:
 
-- garder la transcription `whisper.cpp` comme chemin principal;
+- garder Parakeet Ultra comme moteur de transcription;
 - rendre la diarisation explicitement optionnelle;
 - eviter tout token Hugging Face requis au premier lancement;
 - afficher clairement quand les labels locuteur sont estimes;

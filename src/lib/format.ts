@@ -1,3 +1,4 @@
+import { currentLanguage, t } from "./i18n";
 import type { TranscriptSegment } from "../types";
 
 export function fileName(path: string) {
@@ -5,7 +6,7 @@ export function fileName(path: string) {
 }
 
 export function formatDuration(value: number | null) {
-  if (!value) return "durée inconnue";
+  if (!value) return t("durée inconnue");
   const total = Math.round(value);
   const seconds = total % 60;
   const minutes = Math.floor(total / 60) % 60;
@@ -49,10 +50,10 @@ export function formatBytes(value: number) {
 }
 
 export function formatDate(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return "aucune";
+  if (typeof value !== "string" || !value.trim()) return t("aucune");
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("fr-CH", {
+  return new Intl.DateTimeFormat(currentLanguage(), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

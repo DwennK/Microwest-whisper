@@ -7,8 +7,7 @@
 - Parakeet Ultra INT8 runs with sherpa-onnx 2.0.3 linked into the Rust application.
   The three ONNX files and vocabulary are pinned by revision, size and SHA-256 in `src-tauri/src/model_assets.rs`.
 - The Word exporter and the Tauri dependency tree now share zip 9.8.2.
-- whisper.cpp 1.9.6 builds from the source archive pinned in `scripts/native-dependencies.json`.
-  The manifest also records the five imageio-ffmpeg 0.8.1 wheels and their SHA-256 checksums.
+- The native dependency manifest pins the five imageio-ffmpeg 0.8.1 wheels and their SHA-256 checksums.
 - CI uses Node.js 26 LTS and Python 3.15.
 
 ## Audit
@@ -24,7 +23,7 @@ chain requires glib 0.18.
 
 ## Validation
 
-On Windows x64, 34 frontend tests, 21 Rust tests and 7 release tooling tests
+For the original 0.4.0 release on Windows x64, 34 frontend tests, 21 Rust tests and 7 release tooling tests
 passed. FFmpeg converted a five-second audio sample to mono PCM at 16 kHz,
 and whisper.cpp transcribed it with the large-v3-turbo-q8_0 model.
 The Parakeet integration also transcribed a 133-second French recording and wrote

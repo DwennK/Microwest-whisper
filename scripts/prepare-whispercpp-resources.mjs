@@ -23,25 +23,22 @@ if (!platform) {
   );
 }
 
-const executableNames =
-  platform.startsWith("windows-")
-    ? { whisper: "whisper-cli.exe", ffmpeg: "ffmpeg.exe" }
-    : { whisper: "whisper-cli", ffmpeg: "ffmpeg" };
+const ffmpegName = platform.startsWith("windows-") ? "ffmpeg.exe" : "ffmpeg";
 
 const sourceBinDir = join(sourceRoot, "bin", platform);
 const targetBinDir = join(targetRoot, "bin", platform);
 const targetModelsDir = join(targetRoot, "models");
 
 const required = [
-  join(sourceBinDir, executableNames.whisper),
-  join(sourceBinDir, executableNames.ffmpeg),
+  join(sourceBinDir, "FFMPEG_BUILD.txt"),
+  join(sourceBinDir, ffmpegName),
 ];
 
 const missing = required.filter((path) => !existsSync(path));
 if (missing.length > 0) {
   throw new Error(
     [
-      `Missing whisper.cpp bundled binaries for ${platform}:`,
+      `Missing FFmpeg resources for ${platform}:`,
       ...missing.map((path) => `- ${path}`),
       "Add them before running a release build, or set MICROWEST_BUNDLE_PLATFORM for another target.",
     ].join("\n"),
@@ -57,9 +54,11 @@ copyOptional(join(sourceRoot, "THIRD_PARTY_NOTICES.md"), join(targetRoot, "THIRD
 copyOptional(join(repoRoot, "scripts", "native-dependencies.json"), join(targetRoot, "native-dependencies.json"));
 copyOptional(join(sourceRoot, "models", ".gitkeep"), join(targetModelsDir, ".gitkeep"));
 copyDirectoryFiles(join(sourceRoot, "licenses"), join(targetRoot, "licenses"));
-copyDirectoryFiles(sourceBinDir, targetBinDir);
+for (const name of [ffmpegName, "FFMPEG_BUILD.txt"]) {
+  copyFileSync(join(sourceBinDir, name), join(targetBinDir, name));
+}
 
-console.log(`Prepared whisper.cpp resources for ${platform}`);
+console.log(`Prepared native resources for ${platform}`);
 
 function copyDirectoryFiles(sourceDir, targetDir) {
   mkdirSync(targetDir, { recursive: true });

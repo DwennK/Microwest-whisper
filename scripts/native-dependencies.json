@@ -1,19 +1,6 @@
 {
   "manifest_version": 1,
   "components": {
-    "whisper.cpp": {
-      "version": "v1.9.6",
-      "license": {
-        "spdx": "MIT",
-        "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.6/LICENSE"
-      },
-      "artifacts": {
-        "source": {
-          "url": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.6.tar.gz",
-          "sha256": "7ab15dc88022d2425ad94dcffd8abbf1b6d7018089b4e48d6b40780738e0b445"
-        }
-      }
-    },
     "imageio-ffmpeg": {
       "version": "0.8.1",
       "license": {

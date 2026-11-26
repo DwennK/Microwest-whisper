@@ -128,16 +128,14 @@ jobs:
       - name: Verify native build tools
         run: cmake --version
 
-      - name: Build pinned whisper.cpp and fetch FFmpeg
+      - name: Fetch pinned FFmpeg
         run: python scripts/fetch-whispercpp-binaries.py
 
       - name: Sign bundled macOS native tools ad-hoc
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          for binary in whisper-cli ffmpeg; do
-            codesign --force --sign - "engine/whispercpp/bin/macos-aarch64/$binary"
-          done
+          codesign --force --sign - "engine/whispercpp/bin/macos-aarch64/ffmpeg"
 
       - name: Build installers with signed updater artifacts
         env:
@@ -161,11 +159,9 @@ jobs:
           app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Microwest Whisper.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           test "$(lipo -archs "$app/Contents/MacOS/microwest-whisper")" = arm64
-          for binary in whisper-cli ffmpeg; do
-            native="$app/Contents/Resources/engine/whispercpp/bin/macos-aarch64/$binary"
-            codesign --verify --strict "$native"
-            test "$(lipo -archs "$native")" = arm64
-          done
+          native="$app/Contents/Resources/engine/whispercpp/bin/macos-aarch64/ffmpeg"
+          codesign --verify --strict "$native"
+          test "$(lipo -archs "$native")" = arm64
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7

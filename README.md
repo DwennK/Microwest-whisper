@@ -5,7 +5,7 @@
 <h1 align="center">Microwest Whisper</h1>
 
 <p align="center">
-  <strong>Transcribe recordings on your computer with Parakeet Ultra or Whisper.</strong><br>
+  <strong>Transcribe recordings on your computer with Parakeet Ultra.</strong><br>
   Click a timestamp to hear the original audio, correct a passage, and export the transcript as text, Word, or subtitles.
 </p>
 
@@ -27,38 +27,38 @@
 
 <p align="center">
   <a href="#your-first-transcript">Quick start</a> ·
-  <a href="#choose-a-model">Models</a> ·
+  <a href="#model-and-languages">Model and languages</a> ·
   <a href="#review-and-export">Review and export</a> ·
   <a href="#build-from-source">Build from source</a>
 </p>
 
+> The instructions below describe the current source on `main`. The linked installers are for the [latest published release](https://github.com/DwennK/Microwest-whisper/releases/latest).
+
 ## Your first transcript
 
-1. Install the app and activate your **IA Swiss license**. If you already have Microwest Whisper, click **Mise à jour** in the top right to install the latest release.
+1. Install the app and activate your **IA Swiss license**. If you already have Microwest Whisper, click **Update** in the top right to install the latest release.
 2. Open **Audio** and choose a recording. MP3, M4A, WAV, FLAC, OGG, WebM, and MP4 are supported. Pick the folder where you want the transcript saved.
-3. Download **Parakeet Ultra** when prompted (about 640 MiB), then click **Transcrire**. The installer includes the transcription engines and FFmpeg.
-4. Open **Résultats** to review the text alongside the audio. Your output folder already contains the full transcript and subtitles.
+3. Download **Parakeet Ultra** when prompted (about 640 MiB), then click **Transcribe**. The installer includes the transcription engine and FFmpeg.
+4. Open **Results** to review the text alongside the audio. Your output folder already contains the full transcript and subtitles.
 
 Audio processing runs locally. You need an internet connection to activate your license and download a model. Once the model is installed, you can transcribe offline while your cached license is valid.
 
 For Windows SmartScreen or macOS Gatekeeper prompts, see the [installation guide](docs/RELEASE_INSTALLATION.md). Each release includes signed update packages and [SHA-256 checksums](https://github.com/DwennK/Microwest-whisper/releases/latest/download/SHA256SUMS.txt).
 
-## Choose a model
+## Model and languages
 
-| Model | Download | When to use it |
-| --- | ---: | --- |
-| **Parakeet Ultra · INT8** | 640 MiB | The default for 25 European languages, including English and French. Detects the language automatically and runs on your CPU. |
-| **Whisper large-v3-turbo · Q8** | 834 MiB | Use Whisper for languages such as Arabic, Chinese, Japanese, or Korean, or when you want to set the language yourself. |
-| **Whisper large-v3-turbo · Q5** | 547 MiB | The same Whisper model with a smaller download and the same language options. |
+Parakeet Ultra runs on the CPU and detects the language of each recording automatically. Download the model (640 MiB) from **Audio** or **Settings**. The app verifies each file before installation. Existing Whisper preferences migrate to Parakeet when you upgrade. You can still open older transcripts and exports.
 
-Download, switch, or remove models in **Réglages**. The app checks each download's size and SHA-256 checksum before installing it. When upgrading from 0.3.x, the app selects Parakeet Ultra unless your saved language is Arabic, Chinese, Japanese, or Korean, in which case it keeps Whisper.
+The interface follows your system language. To override it, open **Settings → Interface language** and choose a language by its native name. Choose **System language** to follow your computer again. The setting takes effect immediately and is saved on this device. It affects menus and messages and leaves the words in your transcript as recorded.
+
+The app includes Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, and Ukrainian. English is used when none of the system languages is supported.
 
 ## Review and export
 
 - **Check what you heard.** Search for a word, click its passage timestamp, and play the original recording. Use the space bar to pause and the arrow keys to move back or forward five seconds.
-- **Correct the transcript.** Choose **Corriger** to edit a passage, then **Enregistrer les corrections** to update the full exports.
-- **Keep an excerpt.** Choose **Sélectionner**, check the passages you need, and click **Exporter la sélection**. The excerpt is saved separately from the full transcript.
-- **Reopen earlier work.** **Historique** lets you return to previous transcriptions in the current output folder.
+- **Correct the transcript.** Choose **Edit** to edit a passage, then **Save edits** to update the full exports.
+- **Keep an excerpt.** Choose **Select**, check the passages you need, and click **Export selection**. The excerpt is saved separately from the full transcript.
+- **Reopen earlier work.** **History** lets you return to previous transcriptions in the current output folder.
 
 | File | Contents |
 | --- | --- |
@@ -70,7 +70,7 @@ The default output folder is `Documents/Microwest Whisper/Transcriptions`. The a
 
 ## Build from source
 
-The desktop app uses Tauri 2, React, and Rust. FFmpeg converts the input to 16 kHz mono PCM. Parakeet runs through sherpa-onnx and Whisper runs through whisper.cpp.
+The desktop app uses Tauri 2, React, and Rust. FFmpeg converts the input to 16 kHz mono PCM. Parakeet runs through sherpa-onnx.
 
 Install the [Tauri prerequisites for your platform](https://v2.tauri.app/start/prerequisites/), Node.js with npm, stable Rust, Python 3, CMake, and a C++ toolchain. The release workflow uses Node.js 26 and Python 3.15.
 
@@ -92,8 +92,7 @@ For a local debug session without license activation, use `MICROWEST_LICENSE_BYP
 | Environment variable | Purpose |
 | --- | --- |
 | `MICROWEST_MODEL_DIR` | Use a different model directory. |
-| `MICROWEST_WHISPER_MODEL` | Load a Whisper model from a specific file. |
-| `MICROWEST_WHISPER_CLI` / `MICROWEST_FFMPEG` | Use local native binaries during development. |
+| `MICROWEST_FFMPEG` | Use a local FFmpeg binary during development. |
 
 ```sh
 npm test
@@ -114,7 +113,7 @@ python3 scripts/fetch-whispercpp-binaries.py --verify-manifest
 | macOS | `~/Library/Application Support/Microwest Whisper/models/` |
 | Linux (development) | `~/.local/share/microwest-whisper/models/` |
 
-Windows keeps downloaded models during an app update and removes them on a full uninstall. On macOS, remove models in **Réglages** before deleting the app if you want to reclaim their disk space.
+Windows keeps downloaded models during an app update and removes them on a full uninstall. On macOS, remove models in **Settings** before deleting the app if you want to reclaim their disk space.
 
 </details>
 
@@ -128,7 +127,7 @@ The app sends the license key, installation ID, and app version to the IA Swiss 
 ## Project guides
 
 - [Native dependencies](docs/DEPENDENCIES.md) lists the pinned runtimes, models, and download sources.
-- [Whisper backend](docs/WHISPER_CPP_BACKEND.md) explains how the app finds binaries and models.
+- [Transcription backend](docs/TRANSCRIPTION.md) explains how the app finds binaries and models.
 - [Release and updater guide](docs/UPDATER.md) covers version tags, signing, and publishing Windows and macOS installers.
 - [Speaker identification proposal](docs/DIARIZATION_V2.md) describes the proposed diarization workflow.
 - [Third-party notices](engine/whispercpp/THIRD_PARTY_NOTICES.md) identifies the licenses for the bundled engines and tools.

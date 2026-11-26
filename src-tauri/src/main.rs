@@ -6,6 +6,11 @@ mod model_assets;
 mod paths;
 mod transcription;
 
+#[tauri::command]
+fn system_languages() -> Vec<String> {
+    sys_locale::get_locales().collect()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -14,6 +19,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(transcription::TranscriptionState::default())
         .invoke_handler(tauri::generate_handler![
+            system_languages,
             local_opener::open_local_path,
             license::read_license_state,
             license::activate_license,

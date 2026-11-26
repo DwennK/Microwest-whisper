@@ -1,3 +1,4 @@
+import { message, t, useInterfaceLanguage } from "./lib/i18n";
 import appIcon from "../assets/app-icon-small.png";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -17,7 +18,6 @@ import { useTranscription } from "./hooks/useTranscription";
 import {
   loadOutputDirectory,
   loadTranscriptionSettings,
-  parakeetModel,
   saveOutputDirectory,
   saveTranscriptionSettings,
 } from "./lib/preferences";
@@ -51,6 +51,7 @@ const stageSteps = [
 ];
 
 function App() {
+  const interfaceLanguage = useInterfaceLanguage();
   const [activeStep, setActiveStep] = useState(1);
   const [booting, setBooting] = useState(true);
   const [eventsReady, setEventsReady] = useState(false);
@@ -60,9 +61,6 @@ function App() {
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [appInfo, setAppInfo] = useState<AppDiagnostics | null>(null);
   const [settings, setSettings] = useState(loadTranscriptionSettings);
-  const useParakeet = settings.model === parakeetModel;
-  const language = useParakeet ? "auto" : settings.language;
-  const device = useParakeet ? "cpu" : settings.device;
   const [audioSource, setAudioSource] = useState("");
   const [audioPlaybackMessage, setAudioPlaybackMessage] = useState("");
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -307,7 +305,7 @@ function App() {
   async function chooseAudio() {
     if (controlsLocked) return;
     try {
-      const selected = await openDialog({ multiple: false, filters: [{ name: "Audio", extensions: audioExtensions }] });
+      const selected = await openDialog({ multiple: false, filters: [{ name: t("Audio"), extensions: audioExtensions }] });
       if (typeof selected === "string" && selected !== audioPath) requestChange(() => replaceSource(selected, outputDir));
     } catch (error) { setError(`Sélection impossible : ${String(error)}`); }
   }
@@ -410,7 +408,7 @@ function App() {
 
   function startTranscription() {
     if (!canStart) return;
-    const request: TranscriptionRequest = { ...settings, language, device, audio_path: audioPath, output_dir: outputDir, work_dir: workDir };
+    const request: TranscriptionRequest = { ...settings, audio_path: audioPath, output_dir: outputDir, work_dir: workDir };
     requestChange(async () => {
       await transcription.startTranscription(request);
     });
@@ -480,7 +478,7 @@ function App() {
   }
 
   const activeScreen = (() => {
-    if (booting) return <div className="screen loading-state" role="status"><Loader2 className="spin" />Préparation de l’application…</div>;
+    if (booting) return <div className="screen loading-state" role="status"><Loader2 className="spin" />{t("Préparation de l’application…")}</div>;
     if (activeStep === 0) {
       return (
         <LicenseScreen
@@ -506,8 +504,6 @@ function App() {
           onChooseAudio={chooseAudio}
           onChooseOutputDir={chooseOutputDir}
           onRevealAudio={handleRevealPath}
-          language={language}
-          model={settings.model}
           selectedModel={selectedModel}
           modelReady={selectedModelReady}
           modelBusy={modelBusy}
@@ -526,6 +522,7 @@ function App() {
     if (activeStep === 2) {
       return (
         <SettingsScreen
+          interfaceLanguage={interfaceLanguage}
           settings={settings}
           engine={engine}
           modelInventory={modelInventory}
@@ -572,8 +569,8 @@ function App() {
     }
 
     if (activeStep === 4) {
-      if (loading) return <div className="screen loading-state" role="status"><Loader2 className="spin" />Chargement de la transcription…</div>;
-      if (loadError) return <div className="screen"><p role="alert">{loadError}</p><button type="button" onClick={() => void refreshOutputs(audioPath, outputDir)}>Réessayer le chargement</button></div>;
+      if (loading) return <div className="screen loading-state" role="status"><Loader2 className="spin" />{t("Chargement de la transcription…")}</div>;
+      if (loadError) return <div className="screen"><p role="alert">{message(loadError)}</p><button type="button" onClick={() => void refreshOutputs(audioPath, outputDir)}>{t("Réessayer le chargement")}</button></div>;
       return (
         <ResultsScreen
           key={`${audioPath}|${outputDir}`}
@@ -631,26 +628,26 @@ function App() {
           <img className="brand-icon" src={appIcon} alt="" width={46} height={46} />
           <div>
             <strong>Microwest <span className="brand-product">Whisper</span></strong>
-            <span>Transcription locale</span>
+            <span>{t("Transcription locale")}</span>
           </div>
         </div>
 
-        <p className="rail-label">Votre espace</p>
-        <nav className="steps" aria-label="Étapes de transcription">
+        <p className="rail-label">{t("Votre espace")}</p>
+        <nav className="steps" aria-label={t("Étapes de transcription")}>
           {[1, 3, 4].map((stepIndex, index) => (
             <button key={stepIndex} className={stepIndex === activeStep ? "step is-active" : "step"}
               type="button" aria-current={stepIndex === activeStep ? "step" : undefined}
               disabled={booting} onClick={() => navigateToStep(stepIndex)}>
               {stepIndex === 1 ? <FileAudio size={19} /> : stepIndex === 3 ? <AudioLines size={19} /> : <FileText size={19} />}
-              <span className="step-number">{index + 1}</span><span className="step-name">{steps[stepIndex]}</span>
+              <span className="step-number">{index + 1}</span><span className="step-name">{t(steps[stepIndex])}</span>
             </button>
           ))}
         </nav>
-        <nav className="secondary-nav" aria-label="Application">
+        <nav className="secondary-nav" aria-label={t("Application")}>
           {([{ step: 2, icon: Settings2 }, { step: 0, icon: ShieldCheck }, { step: 5, icon: Info }]).map(({ step, icon: Icon }) => (
             <button key={step} type="button" className={activeStep === step ? "step is-active" : "step"}
               aria-current={activeStep === step ? "page" : undefined} disabled={booting} onClick={() => navigateToStep(step)}>
-              <Icon size={17} />{steps[step]}
+              <Icon size={17} />{t(steps[step])}
             </button>
           ))}
         </nav>
@@ -658,8 +655,8 @@ function App() {
         <div className="engine-box">
           <span className={engine?.can_run ? "dot ok" : "dot warn"} />
           <div>
-            <strong>{engine?.can_run ? "Moteur prêt" : "Moteur à vérifier"}</strong>
-            <p>{transcription.running ? "Transcription en cours" : selectedModelReady ? "Transcription sur cet ordinateur" : "Modèle à télécharger"}</p>
+            <strong>{engine?.can_run ? t("Moteur prêt") : t("Moteur à vérifier")}</strong>
+            <p>{transcription.running ? t("Transcription en cours") : selectedModelReady ? t("Transcription sur cet ordinateur") : t("Modèle à télécharger")}</p>
           </div>
         </div>
       </aside>
@@ -668,19 +665,19 @@ function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">Microwest Whisper</p>
-            <h1>{booting ? "Bienvenue" : steps[activeStep]}</h1>
+            <h1>{booting ? t("Bienvenue") : t(steps[activeStep])}</h1>
           </div>
           <div className="status-area">
             <div className="status-strip">
-              <StatusPill ok={licenseOk} label={license?.state.development_mode === true ? "Mode développement" : licenseOk ? "Licence active" : "Licence requise"} />
+              <StatusPill ok={licenseOk} label={license?.state.development_mode === true ? t("Mode développement") : licenseOk ? t("Licence active") : t("Licence requise")} />
               <button className="update-button" type="button" disabled={updateBusy || transcription.running || outputBusy || loading || changeBusy || hasSegmentEdits} onClick={checkForUpdates}>
                 {updateBusy ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-                Mise à jour
+                {t("Mise à jour")}
               </button>
             </div>
             {updateMessage && (
               <div className="update-inline">
-                <span>{updateMessage}</span>
+                <span>{message(updateMessage)}</span>
                 {updateBusy && updateProgress > 0 && <strong>{updateProgress}%</strong>}
               </div>
             )}
@@ -690,8 +687,8 @@ function App() {
         {error && (
           <div className="notice error" role="alert">
             <CircleAlert size={18} />
-            <span>{error}</span>
-            <button className="notice-dismiss" type="button" aria-label="Fermer le message d’erreur" onClick={() => setError("")}>
+            <span>{message(error)}</span>
+            <button className="notice-dismiss" type="button" aria-label={t("Fermer le message d’erreur")} onClick={() => setError("")}>
               <X size={16} />
             </button>
           </div>

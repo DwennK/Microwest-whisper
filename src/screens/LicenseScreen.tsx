@@ -1,3 +1,4 @@
+import { message, t } from "../lib/i18n";
 import { Check, FileAudio, RefreshCw, ShieldCheck, FileCheck2, Loader2 } from "lucide-react";
 import { SectionTitle } from "../components/ui";
 import { formatDate } from "../lib/format";
@@ -29,22 +30,22 @@ export function LicenseScreen({
   if (license?.state.development_mode === true) return (
     <section className="screen license-screen license-development"><div className="primary-panel">
       <div className="license-symbol"><ShieldCheck size={34} strokeWidth={1.5} /></div>
-      <SectionTitle icon={<ShieldCheck size={20} />} title="Mode développement" />
-      <p className="muted">La vérification de licence est désactivée pour cette session de développement. Aucune licence n’est enregistrée.</p>
-      <p className="muted">Les builds de production nécessitent une licence active.</p>
-      <button className="primary" type="button" onClick={onContinue}><FileAudio size={17} />Continuer</button>
+      <SectionTitle icon={<ShieldCheck size={20} />} title={t("Mode développement")} />
+      <p className="muted">{t("La vérification de licence est désactivée pour cette session de développement. Aucune licence n’est enregistrée.")}</p>
+      <p className="muted">{t("Les builds de production nécessitent une licence active.")}</p>
+      <button className="primary" type="button" onClick={onContinue}><FileAudio size={17} />{t("Continuer")}</button>
     </div></section>
   );
   return (
     <section className={licenseOk ? "screen two-column license-screen license-compact" : "screen two-column license-screen"}>
       <div className="primary-panel">
         <div className="license-symbol"><ShieldCheck size={34} strokeWidth={1.5} /></div>
-        <SectionTitle icon={<ShieldCheck size={20} />} title="Licence IA Swiss" />
-        <p className="muted">{licenseOk ? "Licence active." : license?.status_text ?? "Validation de la licence au lancement..."}</p>
+        <SectionTitle icon={<ShieldCheck size={20} />} title={t("Licence IA Swiss")} />
+        <p className="muted">{licenseOk ? t("Licence active.") : message(license?.status_text) || t("Validation de la licence au lancement...")}</p>
         {!licenseOk && (
           <>
             <label className="field">
-              <span>Clé de licence</span>
+              <span>{t("Clé de licence")}</span>
               <input
                 value={licenseKey}
                 placeholder="MW-XXXXX-XXXXX-XXXXX-XXXXX"
@@ -54,11 +55,11 @@ export function LicenseScreen({
             <div className="action-row">
               <button className="primary" type="button" disabled={licenseBusy || !licenseKey.trim()} onClick={onActivate}>
                 {licenseBusy ? <Loader2 className="spin" size={17} /> : <Check size={17} />}
-                Activer
+                {t("Activer")}
               </button>
               <button type="button" disabled={licenseBusy || !license?.state?.license_key} onClick={onValidateOnline}>
                 <RefreshCw size={17} />
-                Vérifier
+                {t("Vérifier")}
               </button>
             </div>
           </>
@@ -67,30 +68,30 @@ export function LicenseScreen({
           <div className="action-row">
             <button type="button" disabled={licenseBusy || !license?.state?.license_key} onClick={onValidateOnline}>
               {licenseBusy ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
-              Revérifier
+              {t("Revérifier")}
             </button>
             <button className="primary" type="button" onClick={onContinue}>
               <FileAudio size={17} />
-              Continuer
+              {t("Continuer")}
             </button>
           </div>
         )}
-        {licenseMessage && <p className="inline-status">{licenseMessage}</p>}
+        {licenseMessage && <p className="inline-status">{message(licenseMessage)}</p>}
       </div>
       <div className="secondary-panel">
-        <SectionTitle icon={<FileCheck2 size={20} />} title="Votre licence" />
+        <SectionTitle icon={<FileCheck2 size={20} />} title={t("Votre licence")} />
         <dl className="details">
           <div>
-            <dt>Abonnement</dt>
-            <dd>{String(license?.state?.subscription_status ?? "non vérifié")}</dd>
+            <dt>{t("Abonnement")}</dt>
+            <dd>{message(String(license?.state?.subscription_status ?? "non vérifié"))}</dd>
           </div>
           <div>
-            <dt>Validité locale</dt>
+            <dt>{t("Validité locale")}</dt>
             <dd>{formatDate(license?.state?.valid_until)}</dd>
           </div>
           <div>
-            <dt>État local</dt>
-            <dd>{licenseOk ? "valide" : "à vérifier"}</dd>
+            <dt>{t("État local")}</dt>
+            <dd>{licenseOk ? t("valide") : t("à vérifier")}</dd>
           </div>
         </dl>
       </div>

@@ -3,17 +3,14 @@ import type { TranscriptionRequest } from "../types";
 export type TranscriptionSettings = Omit<TranscriptionRequest, "audio_path" | "output_dir">;
 
 export const parakeetModel = "parakeet-ultra-int8";
-export const modelOptions = [parakeetModel, "large-v3-turbo-q8_0", "large-v3-turbo-q5_0"] as const;
-export const languageOptions = ["auto", "fr", "en", "de", "it", "es", "pt", "nl", "pl", "uk", "ar", "zh", "ja", "ko"] as const;
 export const audioFilterOptions = ["loudnorm", "voice-clean", "none"] as const;
-export const deviceOptions = ["auto", "cpu"] as const;
 
 export const defaultTranscriptionSettings: TranscriptionSettings = {
   model: parakeetModel,
-  language: "fr",
+  language: "auto",
   audio_filter: "loudnorm",
   threads: 0,
-  device: "auto",
+  device: "cpu",
   trim_silence: false,
   force: false,
 };
@@ -59,15 +56,12 @@ export function loadTranscriptionSettings(storage: StorageReader | null = browse
       ? value.threads
       : defaultTranscriptionSettings.threads;
 
-    const language = optionValue(value.language, languageOptions, "fr");
-    const savedModel = optionValue(value.model, modelOptions, parakeetModel);
-    const migrateToUltra = current === null && !["ar", "zh", "ja", "ko"].includes(language);
     return {
-      model: migrateToUltra ? parakeetModel : savedModel,
-      language,
+      model: parakeetModel,
+      language: "auto",
       audio_filter: optionValue(value.audio_filter, audioFilterOptions, audioFilterOptions[0]),
       threads,
-      device: optionValue(value.device, deviceOptions, deviceOptions[0]),
+      device: "cpu",
       trim_silence: typeof value.trim_silence === "boolean" ? value.trim_silence : defaultTranscriptionSettings.trim_silence,
       force: typeof value.force === "boolean" ? value.force : defaultTranscriptionSettings.force,
     };
@@ -108,18 +102,5 @@ export const preferenceStorageKeys = {
   outputDirectory: OUTPUT_DIRECTORY_KEY,
 } as const;
 
-const languageLabels: Record<string, string> = {
-  auto: "Détection automatique", fr: "Français", en: "Anglais", de: "Allemand",
-  it: "Italien", es: "Espagnol", pt: "Portugais", nl: "Néerlandais", pl: "Polonais",
-  uk: "Ukrainien", ar: "Arabe", zh: "Chinois", ja: "Japonais", ko: "Coréen",
-};
-export const languageLabel = (value: string) => languageLabels[value] ?? value;
-export const backendLabel = (model: string) => model === parakeetModel ? "sherpa-onnx" : "whisper.cpp";
-const modelLabels: Record<string, string> = {
-  [parakeetModel]: "Parakeet Ultra · INT8",
-  "large-v3-turbo-q8_0": "Whisper large v3 turbo · Q8",
-  "large-v3-turbo-q5_0": "Whisper large v3 turbo · Q5",
-};
-export const modelLabel = (value: string) => modelLabels[value] ?? value;
+export const parakeetLabel = "Parakeet Ultra · INT8";
 export const audioFilterLabel = (value: string) => ({ loudnorm: "Normaliser le volume", "voice-clean": "Nettoyer la voix", none: "Aucun filtre" })[value] ?? value;
-export const deviceLabel = (value: string) => value === "auto" ? "Automatique" : "Processeur uniquement";

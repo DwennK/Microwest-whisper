@@ -9,7 +9,6 @@ import platform
 import shutil
 import stat
 import subprocess
-import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -22,7 +21,7 @@ MANIFEST_PATH = REPO_ROOT / "scripts" / "native-dependencies.json"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fetch native whisper.cpp backend binaries.")
+    parser = argparse.ArgumentParser(description="Fetch the pinned FFmpeg binary.")
     parser.add_argument("--platform", default=os.environ.get("MICROWEST_BUNDLE_PLATFORM"))
     parser.add_argument("--verify-manifest", action="store_true")
     args = parser.parse_args()
@@ -44,18 +43,16 @@ def main() -> None:
         raise SystemExit(f"Unsupported platform: {target}")
     if target != detect_platform():
         raise SystemExit(
-            f"Build {target} on a matching host; source builds do not cross-compile "
-            f"from {detect_platform()}."
+            f"Verify the {target} FFmpeg executable on a matching host (current: {detect_platform()})."
         )
 
     with tempfile.TemporaryDirectory(prefix="microwest-whispercpp-") as tmp:
         tmp_dir = Path(tmp)
         target_dir = BIN_ROOT / target
         target_dir.mkdir(parents=True, exist_ok=True)
-        fetch_whisper_cli(manifest, target, target_dir, tmp_dir)
         fetch_ffmpeg(manifest, target, target_dir, tmp_dir)
 
-    print(f"Fetched whisper.cpp binaries for {target}: {target_dir}")
+    print(f"Fetched FFmpeg for {target}: {target_dir}")
 
 
 def detect_platform() -> str:
@@ -80,7 +77,6 @@ def verify_manifest(manifest: dict) -> None:
         raise SystemExit("Unsupported native dependency manifest version")
     components = manifest.get("components", {})
     required_artifacts = {
-        "whisper.cpp": {"source"},
         "imageio-ffmpeg": {"macos-aarch64", "macos-x86_64", "windows-x86_64", "linux-x86_64", "linux-aarch64"},
     }
     for name, required in required_artifacts.items():
@@ -116,48 +112,6 @@ def artifact(manifest: dict, component_name: str, artifact_name: str) -> dict:
     return component(manifest, component_name)["artifacts"][artifact_name]
 
 
-def fetch_whisper_cli(manifest: dict, target: str, target_dir: Path, tmp_dir: Path) -> None:
-    # Build the same verified release on every OS; upstream does not publish
-    # prebuilt CLI assets for every release.
-    whisper = component(manifest, "whisper.cpp")
-    source = artifact(manifest, "whisper.cpp", "source")
-    archive = tmp_dir / "whisper.cpp.tar.gz"
-    source_dir = tmp_dir / f"whisper.cpp-{whisper['version'].removeprefix('v')}"
-    build_dir = source_dir / "build"
-    download(source["url"], archive, source["sha256"])
-    with tarfile.open(archive, "r:gz") as tar:
-        safe_extract_tar(tar, tmp_dir)
-
-    cmake = cmake_command()
-    options = [
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DBUILD_SHARED_LIBS=OFF",
-        "-DWHISPER_BUILD_TESTS=OFF",
-        "-DWHISPER_BUILD_EXAMPLES=ON",
-        "-DWHISPER_BUILD_SERVER=OFF",
-        "-DGGML_NATIVE=OFF",
-        "-DGGML_OPENMP=OFF",
-        f"-DGGML_METAL={'ON' if target.startswith('macos-') else 'OFF'}",
-    ]
-    if target.startswith("macos-"):
-        options += [
-            "-DGGML_METAL_EMBED_LIBRARY=ON",
-            f"-DCMAKE_OSX_ARCHITECTURES={'arm64' if target == 'macos-aarch64' else 'x86_64'}",
-        ]
-    elif target == "windows-x86_64":
-        options += ["-A", "x64"]
-    run([*cmake, "-S", str(source_dir), "-B", str(build_dir), *options])
-    run([
-        *cmake, "--build", str(build_dir), "--config", "Release",
-        "--target", "whisper-cli", "--parallel", str(min(os.cpu_count() or 2, 4)),
-    ])
-    filename = "whisper-cli.exe" if target.startswith("windows-") else "whisper-cli"
-    binary_dir = build_dir / "bin"
-    if target.startswith("windows-"):
-        binary_dir /= "Release"
-    install_executable(binary_dir / filename, target_dir / filename)
-
-
 def fetch_ffmpeg(manifest: dict, target: str, target_dir: Path, tmp_dir: Path) -> None:
     pinned = artifact(manifest, "imageio-ffmpeg", target)
     wheel = tmp_dir / "imageio-ffmpeg.whl"
@@ -172,15 +126,6 @@ def fetch_ffmpeg(manifest: dict, target: str, target_dir: Path, tmp_dir: Path) -
     installed = target_dir / name
     install_executable(binary, installed)
     verify_ffmpeg_license(manifest, installed)
-
-
-def cmake_command() -> list[str]:
-    if shutil.which("cmake"):
-        return ["cmake"]
-    raise SystemExit(
-        "CMake and a C++ compiler are required to build the pinned whisper.cpp source. "
-        "Install CMake (macOS: `brew install cmake`) and retry."
-    )
 
 
 def download(url: str, destination: Path, expected_sha256: str) -> None:
@@ -232,20 +177,6 @@ def install_executable(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
-def safe_extract_tar(tar: tarfile.TarFile, destination: Path) -> None:
-    root = destination.resolve()
-    for member in tar.getmembers():
-        target = (destination / member.name).resolve()
-        if root != target and root not in target.parents:
-            raise SystemExit(f"Unsafe tar member path: {member.name}")
-    tar.extractall(destination)
-
-
-def run(command: list[str], env=None) -> None:
-    print("+", " ".join(command))
-    subprocess.run(command, check=True, env=env)
 
 
 if __name__ == "__main__":

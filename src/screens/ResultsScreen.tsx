@@ -1,3 +1,4 @@
+import { currentLanguage, message, t } from "../lib/i18n";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowRight, Clipboard, Download, ExternalLink, FileText, FolderOpen, FolderSearch, History, ListChecks, PencilLine, Rewind, FastForward, Save, Search, X } from "lucide-react";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
@@ -42,7 +43,7 @@ function ResultsDialog({ title, onClose, children }: { title: string; onClose: (
   }, [previousFocus]);
   return <dialog ref={dialog} className="document-dialog" aria-label={title}
     onCancel={(event) => { event.preventDefault(); onClose(); }}>
-    <header><h2>{title}</h2><button type="button" className="icon-button" aria-label="Fermer" autoFocus onClick={onClose}><X size={20} /></button></header>
+    <header><h2>{title}</h2><button type="button" className="icon-button" aria-label={t("Fermer")} autoFocus onClick={onClose}><X size={20} /></button></header>
     {children}
   </dialog>;
 }
@@ -108,89 +109,89 @@ export function ResultsScreen({
 
   function renderHistory() {
     return <div className="document-history">
-      {history.length === 0 && <p className="muted">Les transcriptions terminées apparaîtront ici.</p>}
+      {history.length === 0 && <p className="muted">{t("Les transcriptions terminées apparaîtront ici.")}</p>}
       {history.slice(0, 6).map((record) => <button key={`${record.created_at}-${record.stem}`} type="button" disabled={busy}
         onClick={() => { setPanel(null); onLoadHistoryRecord(record.source_audio, outputDir); }}>
-        <FileText size={20} /><span><strong>{fileName(record.source_audio)}</strong><small>{formatDuration(record.duration_seconds)} · {new Date(record.created_at).toLocaleDateString("fr-CH")}</small></span><ArrowRight size={17} />
+        <FileText size={20} /><span><strong>{fileName(record.source_audio)}</strong><small>{formatDuration(record.duration_seconds)} · {new Date(record.created_at).toLocaleDateString(currentLanguage())}</small></span><ArrowRight size={17} />
       </button>)}
     </div>;
   }
 
   function renderFiles(files: OutputFile[], disabled: boolean) {
     return <div className="document-files">{files.map((item) => <div key={item.path}>
-      <FileText size={20} /><span><strong>{item.label}</strong><small title={item.path}>{fileName(item.path)}</small></span>
-      <button type="button" disabled={disabled || !item.exists} aria-label={`Ouvrir ${item.label}`} onClick={() => onOpenPath(item.path)}><ExternalLink size={16} />Ouvrir</button>
-      <button className="icon-button" type="button" disabled={disabled || !item.exists} aria-label={`Afficher ${item.label} dans le dossier`} title="Afficher dans le dossier" onClick={() => onRevealPath(item.path)}><FolderSearch size={17} /></button>
+      <FileText size={20} /><span><strong>{t(item.label)}</strong><small title={item.path}>{fileName(item.path)}</small></span>
+      <button type="button" disabled={disabled || !item.exists} aria-label={t("Ouvrir {0}", t(item.label))} onClick={() => onOpenPath(item.path)}><ExternalLink size={16} />{t("Ouvrir")}</button>
+      <button className="icon-button" type="button" disabled={disabled || !item.exists} aria-label={t("Afficher {0} dans le dossier", t(item.label))} title={t("Afficher dans le dossier")} onClick={() => onRevealPath(item.path)}><FolderSearch size={17} /></button>
     </div>)}</div>;
   }
 
   if (segments.length === 0) return <section className="screen results-home">
     <div className="results-welcome">
       <div className="results-welcome-icon"><FileText size={30} /></div>
-      <h2>{audioPath ? "Ce fichier n’a pas encore de transcription" : history.length ? "Ouvrez une transcription" : "Transcrivez votre premier fichier"}</h2>
-      <p>{audioPath ? fileName(audioPath) : "Choisissez un fichier audio, puis retrouvez ici son texte et ses exports."}</p>
-      <button type="button" className="primary" disabled={busy} onClick={onAudio}>{audioPath ? "Revenir au fichier audio" : "Choisir un fichier audio"}<ArrowRight size={17} /></button>
+      <h2>{audioPath ? t("Ce fichier n’a pas encore de transcription") : history.length ? t("Ouvrez une transcription") : t("Transcrivez votre premier fichier")}</h2>
+      <p>{audioPath ? fileName(audioPath) : t("Choisissez un fichier audio, puis retrouvez ici son texte et ses exports.")}</p>
+      <button type="button" className="primary" disabled={busy} onClick={onAudio}>{audioPath ? t("Revenir au fichier audio") : t("Choisir un fichier audio")}<ArrowRight size={17} /></button>
     </div>
-    {history.length > 0 && <section className="results-recent"><h3>Reprendre une transcription</h3>{renderHistory()}</section>}
+    {history.length > 0 && <section className="results-recent"><h3>{t("Reprendre une transcription")}</h3>{renderHistory()}</section>}
   </section>;
 
   return <section className="screen document-workspace">
     <header className="document-header">
-      <div className="document-identity"><h2 title={audioPath}>{fileName(audioPath)}</h2><span>{formatDuration(duration)} · {segments.length} passage{segments.length > 1 ? "s" : ""}{hasSegmentEdits && <b> · Corrections non enregistrées</b>}</span></div>
+      <div className="document-identity"><h2 title={audioPath}>{fileName(audioPath)}</h2><span>{formatDuration(duration)} · {t("Passages : {0}", segments.length)}{hasSegmentEdits && <b> {t("· Corrections non enregistrées")}</b>}</span></div>
       <div className="document-actions">
-        <button type="button" disabled={busy} onClick={() => setPanel("history")}><History size={17} />Historique</button>
-        <button type="button" className="primary" disabled={busy} onClick={() => setPanel("files")}><Download size={17} />Exporter</button>
+        <button type="button" disabled={busy} onClick={() => setPanel("history")}><History size={17} />{t("Historique")}</button>
+        <button type="button" className="primary" disabled={busy} onClick={() => setPanel("files")}><Download size={17} />{t("Exporter")}</button>
       </div>
     </header>
     <fieldset className="plain-fieldset document-surface" disabled={busy}>
       <div className="document-listen">
         {audioSource ? <>
-          <button className="icon-button" type="button" aria-label="Reculer de 5 secondes" title="Reculer de 5 secondes" onClick={() => seekRelative(-5)}><Rewind size={17} /></button>
-          <audio ref={audioRef} aria-label={`Lecteur audio ${fileName(audioPath)}`} controls preload="metadata" src={audioSource}
+          <button className="icon-button" type="button" aria-label={t("Reculer de 5 secondes")} title={t("Reculer de 5 secondes")} onClick={() => seekRelative(-5)}><Rewind size={17} /></button>
+          <audio ref={audioRef} aria-label={t("Lecteur audio {0}", fileName(audioPath))} controls preload="metadata" src={audioSource}
             onError={() => setAudioError("Ce format audio ne peut pas être lu directement. La transcription reste disponible.")} />
-          <button className="icon-button" type="button" aria-label="Avancer de 5 secondes" title="Avancer de 5 secondes" onClick={() => seekRelative(5)}><FastForward size={17} /></button>
-          <span className="listen-hint">Cliquez sur un horaire<br />pour écouter le passage</span>
-        </> : <p className="muted">{audioPlaybackMessage || "Lecture audio indisponible pour ce fichier."}</p>}
+          <button className="icon-button" type="button" aria-label={t("Avancer de 5 secondes")} title={t("Avancer de 5 secondes")} onClick={() => seekRelative(5)}><FastForward size={17} /></button>
+          <span className="listen-hint">{t("Cliquez sur un horaire pour écouter le passage")}</span>
+        </> : <p className="muted">{message(audioPlaybackMessage) || t("Lecture audio indisponible pour ce fichier.")}</p>}
       </div>
-      {audioError && <p className="document-notice" role="alert">{audioError}</p>}
+      {audioError && <p className="document-notice" role="alert">{message(audioError)}</p>}
       <div className="document-toolbar">
-        <div className="document-modes" role="group" aria-label="Mode de transcription">
-          <button type="button" aria-pressed={mode === "read"} onClick={() => setMode("read")}><FileText size={16} />Lire</button>
-          <button type="button" aria-pressed={mode === "edit"} onClick={() => setMode("edit")}><PencilLine size={16} />Corriger</button>
-          <button type="button" aria-pressed={mode === "select"} onClick={() => setMode("select")}><ListChecks size={16} />Sélectionner</button>
+        <div className="document-modes" role="group" aria-label={t("Mode de transcription")}>
+          <button type="button" aria-pressed={mode === "read"} onClick={() => setMode("read")}><FileText size={16} />{t("Lire")}</button>
+          <button type="button" aria-pressed={mode === "edit"} onClick={() => setMode("edit")}><PencilLine size={16} />{t("Corriger")}</button>
+          <button type="button" aria-pressed={mode === "select"} onClick={() => setMode("select")}><ListChecks size={16} />{t("Sélectionner")}</button>
         </div>
-        <label className="search-field document-search"><Search size={16} /><input aria-label="Rechercher dans la transcription" placeholder="Rechercher un passage…" value={segmentSearch} onChange={(event) => setSegmentSearch(event.target.value)} /></label>
+        <label className="search-field document-search"><Search size={16} /><input aria-label={t("Rechercher dans la transcription")} placeholder={t("Rechercher un passage…")} value={segmentSearch} onChange={(event) => setSegmentSearch(event.target.value)} /></label>
       </div>
-      {mode === "edit" && <div className="document-context"><span>{hasSegmentEdits ? "Vos corrections sont prêtes à enregistrer." : "Cliquez dans le texte pour le corriger."}</span><button type="button" className={hasSegmentEdits ? "primary" : ""} disabled={!hasSegmentEdits} onClick={onSaveFullTranscript}><Save size={16} />Enregistrer les corrections</button></div>}
-      {mode === "select" && <div className="document-context"><span><strong>{selectedCount}</strong> passage{selectedCount > 1 ? "s" : ""} sélectionné{selectedCount > 1 ? "s" : ""}{hiddenSelectedCount > 0 && ` · ${hiddenSelectedCount} hors recherche`}</span>
-        <button type="button" className="text-button" disabled={!filteredSegments.length} onClick={() => onSetVisibleSegments(visibleIndexes, true)}>{segmentSearch ? "Sélectionner les résultats" : "Tout sélectionner"}</button>
-        <button type="button" className="text-button" disabled={!selectedCount} onClick={() => onSetVisibleSegments(segments.map((_, index) => index), false)}>Effacer la sélection</button>
+      {mode === "edit" && <div className="document-context"><span>{hasSegmentEdits ? t("Vos corrections sont prêtes à enregistrer.") : t("Cliquez dans le texte pour le corriger.")}</span><button type="button" className={hasSegmentEdits ? "primary" : ""} disabled={!hasSegmentEdits} onClick={onSaveFullTranscript}><Save size={16} />{t("Enregistrer les corrections")}</button></div>}
+      {mode === "select" && <div className="document-context"><span>{t("Passages sélectionnés : {0}", selectedCount)}{hiddenSelectedCount > 0 && t(" · {0} hors recherche", hiddenSelectedCount)}</span>
+        <button type="button" className="text-button" disabled={!filteredSegments.length} onClick={() => onSetVisibleSegments(visibleIndexes, true)}>{segmentSearch ? t("Sélectionner les résultats") : t("Tout sélectionner")}</button>
+        <button type="button" className="text-button" disabled={!selectedCount} onClick={() => onSetVisibleSegments(segments.map((_, index) => index), false)}>{t("Effacer la sélection")}</button>
       </div>}
-      {segmentSearch && <div className="document-search-status" role="status">{filteredSegments.length} passage{filteredSegments.length > 1 ? "s" : ""} trouvé{filteredSegments.length > 1 ? "s" : ""}<button type="button" className="text-button" onClick={() => setSegmentSearch("")}>Effacer la recherche</button></div>}
-      <div className={`document-body mode-${mode}`} ref={listRef} tabIndex={0} aria-label="Texte de la transcription">
-        {!filteredSegments.length && <p className="muted">Aucun passage ne correspond à cette recherche.</p>}
+      {segmentSearch && <div className="document-search-status" role="status">{t("Résultats : {0}", filteredSegments.length)}<button type="button" className="text-button" onClick={() => setSegmentSearch("")}>{t("Effacer la recherche")}</button></div>}
+      <div className={`document-body mode-${mode}`} ref={listRef} tabIndex={0} aria-label={t("Texte de la transcription")}>
+        {!filteredSegments.length && <p className="muted">{t("Aucun passage ne correspond à cette recherche.")}</p>}
         {filteredSegments.map(({ segment, index }) => <article key={`${index}-${segment.start}`} className={`document-passage${focusedSegment === index ? " is-focused" : ""}${mode === "select" && selectedSegments.includes(index) ? " is-selected" : ""}`}>
-          {mode === "select" && <label className="segment-check" aria-label={`Sélectionner le segment ${index + 1}`}><input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => onToggleSegment(index)} /><span /></label>}
-          <button type="button" className="timestamp-button" disabled={!audioSource} title="Écouter ce passage" onClick={() => { setFocusedSegment(index); void playFrom(segment.start); }}>{formatSegmentTimestamp(segment.start)}</button>
-          {mode === "edit" ? <textarea aria-label={`Texte du segment ${index + 1}`} rows={Math.max(3, Math.ceil(segment.text.length / 85))} value={segment.text} onChange={(event) => onUpdateSegment(index, event.target.value)} /> : <p>{segment.text}</p>}
+          {mode === "select" && <label className="segment-check" aria-label={t("Sélectionner le segment {0}", index + 1)}><input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => onToggleSegment(index)} /><span /></label>}
+          <button type="button" className="timestamp-button" disabled={!audioSource} title={t("Écouter ce passage")} onClick={() => { setFocusedSegment(index); void playFrom(segment.start); }}>{formatSegmentTimestamp(segment.start)}</button>
+          {mode === "edit" ? <textarea aria-label={t("Texte du segment {0}", index + 1)} rows={Math.max(3, Math.ceil(segment.text.length / 85))} value={segment.text} onChange={(event) => onUpdateSegment(index, event.target.value)} /> : <p>{segment.text}</p>}
         </article>)}
       </div>
       <footer className="document-footer">
-        <span role="status">{busy ? "Enregistrement…" : resultMessage || (mode === "select" ? "Cochez les passages à conserver dans votre extrait." : "Espace : lecture / pause · ← → : reculer / avancer")}</span>
-        {mode === "select" ? <><button type="button" disabled={!selectedCount} onClick={() => onCopyText(selectedText)}><Clipboard size={16} />Copier la sélection</button><button type="button" className="primary" disabled={!selectedCount} onClick={() => { setPanel("selection"); onExportSelection(); }}><Download size={16} />Exporter la sélection</button></>
-          : <button type="button" onClick={() => onCopyText(fullText)}><Clipboard size={16} />Copier le texte</button>}
+        <span role="status">{busy ? t("Enregistrement…") : message(resultMessage) || (mode === "select" ? t("Cochez les passages à conserver dans votre extrait.") : t("Espace : lecture / pause · ← → : reculer / avancer"))}</span>
+        {mode === "select" ? <><button type="button" disabled={!selectedCount} onClick={() => onCopyText(selectedText)}><Clipboard size={16} />{t("Copier la sélection")}</button><button type="button" className="primary" disabled={!selectedCount} onClick={() => { setPanel("selection"); onExportSelection(); }}><Download size={16} />{t("Exporter la sélection")}</button></>
+          : <button type="button" onClick={() => onCopyText(fullText)}><Clipboard size={16} />{t("Copier le texte")}</button>}
       </footer>
     </fieldset>
-    {panel && <ResultsDialog title={panel === "history" ? "Historique récent" : isSelection ? "Exporter la sélection" : "Exporter la transcription"} onClose={() => setPanel(null)}>
-      {resultError && <p className="notice error" role="alert">{resultError}</p>}
+    {panel && <ResultsDialog title={panel === "history" ? t("Historique récent") : isSelection ? t("Exporter la sélection") : t("Exporter la transcription")} onClose={() => setPanel(null)}>
+      {resultError && <p className="notice error" role="alert">{message(resultError)}</p>}
       {panel === "history" ? renderHistory() : <>
-        <p className="document-dialog-description">{isSelection ? `${selectedCount} passage${selectedCount > 1 ? "s" : ""} · TXT, Word et sous-titres SRT` : "Votre transcription complète, prête à utiliser."}</p>
-        {!isSelection && hasSegmentEdits && <div className="document-save-notice"><p>Enregistrez vos corrections pour mettre les fichiers à jour.</p><button type="button" className="primary" disabled={busy} onClick={onSaveFullTranscript}><Save size={16} />Enregistrer les corrections</button></div>}
-        <div role="status" className="document-export-status">{busy ? "Enregistrement des fichiers…" : resultMessage}</div>
+        <p className="document-dialog-description">{isSelection ? t("Passages : {0} · TXT, Word et sous-titres SRT", selectedCount) : t("Votre transcription complète, prête à utiliser.")}</p>
+        {!isSelection && hasSegmentEdits && <div className="document-save-notice"><p>{t("Enregistrez vos corrections pour mettre les fichiers à jour.")}</p><button type="button" className="primary" disabled={busy} onClick={onSaveFullTranscript}><Save size={16} />{t("Enregistrer les corrections")}</button></div>}
+        <div role="status" className="document-export-status">{busy ? t("Enregistrement des fichiers…") : message(resultMessage)}</div>
         {renderFiles(isSelection ? selectionOutputs : outputs, busy || (!isSelection && hasSegmentEdits))}
-        {!busy && (isSelection ? selectionOutputs : outputs).filter((item) => item.exists).length === 0 && <p>Aucun fichier disponible.{isSelection && " Fermez cette fenêtre pour réessayer l’export."}</p>}
-        <details className="document-srt"><summary>Aperçu des sous-titres SRT</summary><pre>{panelSrt}</pre><button type="button" disabled={busy || !panelSrt} onClick={() => onCopyText(panelSrt)}><Clipboard size={16} />Copier le SRT</button></details>
-        <footer><button type="button" disabled={busy || !outputDir} onClick={() => onOpenPath(outputDir)}><FolderOpen size={17} />Ouvrir le dossier</button><button type="button" disabled={busy || !panelText} onClick={() => onCopyText(panelText)}><Clipboard size={16} />{isSelection ? "Copier la sélection" : "Copier le texte"}</button></footer>
+        {!busy && (isSelection ? selectionOutputs : outputs).filter((item) => item.exists).length === 0 && <p>{t("Aucun fichier disponible.")}{isSelection && t(" Fermez cette fenêtre pour réessayer l’export.")}</p>}
+        <details className="document-srt"><summary>{t("Aperçu des sous-titres SRT")}</summary><pre>{panelSrt}</pre><button type="button" disabled={busy || !panelSrt} onClick={() => onCopyText(panelSrt)}><Clipboard size={16} />{t("Copier le SRT")}</button></details>
+        <footer><button type="button" disabled={busy || !outputDir} onClick={() => onOpenPath(outputDir)}><FolderOpen size={17} />{t("Ouvrir le dossier")}</button><button type="button" disabled={busy || !panelText} onClick={() => onCopyText(panelText)}><Clipboard size={16} />{isSelection ? t("Copier la sélection") : t("Copier le texte")}</button></footer>
       </>}
     </ResultsDialog>}
   </section>;

@@ -31,8 +31,8 @@ describe("preferences", () => {
     });
 
     expect(loadTranscriptionSettings(storage)).toEqual({
-      model: "large-v3-turbo-q5_0",
-      language: "de",
+      model: "parakeet-ultra-int8",
+      language: "auto",
       audio_filter: defaultTranscriptionSettings.audio_filter,
       threads: 12,
       device: "cpu",
@@ -41,13 +41,13 @@ describe("preferences", () => {
     });
   });
 
-  it("migrates older French settings to Ultra and keeps Whisper for Japanese", () => {
+  it("migrates every legacy language to Parakeet with automatic detection", () => {
     const legacyKey = "microwest-whisper:transcription-settings:v1";
     const settings = { model: "large-v3-turbo-q8_0", threads: 6, language: "fr" };
     expect(loadTranscriptionSettings(memoryStorage({ [legacyKey]: JSON.stringify(settings) })))
       .toMatchObject({ model: "parakeet-ultra-int8", threads: 6 });
     expect(loadTranscriptionSettings(memoryStorage({ [legacyKey]: JSON.stringify({ ...settings, language: "ja" }) })))
-      .toMatchObject({ model: settings.model, language: "ja" });
+      .toMatchObject({ model: "parakeet-ultra-int8", language: "auto" });
   });
 
   it("falls back safely when persisted settings are malformed", () => {

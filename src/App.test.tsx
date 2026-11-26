@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { t } from "./lib/i18n";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const listenMock = vi.hoisted(() => vi.fn());
@@ -55,9 +56,8 @@ describe("App", () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "engine_status") {
         return Promise.resolve({
-          backend: "whisper.cpp",
+          backend: "sherpa-onnx",
           engine_root: "/engine",
-          whisper_cli: "/engine/whisper-cli",
           ffmpeg: "/engine/ffmpeg",
           model_path: "/models/model.bin",
           default_model: "parakeet-ultra-int8",
@@ -66,7 +66,7 @@ describe("App", () => {
           platform: "macos",
           architecture: "aarch64",
           can_run: true,
-          message: "Backend natif whisper.cpp prêt.",
+          message: "Parakeet Ultra est prêt.",
         });
       }
 
@@ -94,17 +94,6 @@ describe("App", () => {
               path: "/models/model.bin",
               source: "downloaded",
             },
-            {
-              id: "large-v3-turbo-q8_0",
-              label: "large-v3-turbo q8_0",
-              filename: "ggml-large-v3-turbo-q8_0.bin",
-              url: "https://example.test/model.bin",
-              size_bytes: 874_188_075,
-              size_label: "834 MiB",
-              installed: modelInstalled,
-              path: "/models/model.bin",
-              source: "downloaded",
-            },
           ],
         });
       }
@@ -113,7 +102,7 @@ describe("App", () => {
         return Promise.resolve({
           name: "Microwest Whisper",
           version: "0.2.3",
-          backend: "whisper.cpp",
+          backend: "sherpa-onnx",
           platform: "macos",
           architecture: "aarch64",
           engine_root: "/engine",
@@ -218,15 +207,43 @@ describe("App", () => {
     render(<App />);
     await chooseFile();
     fireEvent.click(within(screen.getByRole("navigation", { name: "Application" })).getByRole("button", { name: "Réglages" }));
-    expect(screen.getByLabelText("Langue")).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Modèle"), { target: { value: "large-v3-turbo-q8_0" } });
-    fireEvent.change(screen.getByLabelText("Langue"), { target: { value: "en" } });
-    fireEvent.change(screen.getByLabelText("Calcul"), { target: { value: "cpu" } });
+    expect(screen.queryByLabelText("Modèle")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filtre audio"), { target: { value: "voice-clean" } });
     fireEvent.click(screen.getByRole("button", { name: "Retour au fichier" }));
-    expect(screen.getByText("Anglais")).toBeInTheDocument();
+    expect(screen.getByText("Détection automatique")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Transcrire" }));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("start_transcription", { request: expect.objectContaining({ language: "en", device: "cpu" }) }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("start_transcription", { request: expect.objectContaining({ language: "auto", device: "cpu", audio_filter: "voice-clean" }) }));
   });
+
+  it("switches the whole interface immediately and restores the choice on restart", async () => {
+    const first = render(<App />);
+    await screen.findByRole("heading", { name: "Audio" });
+    navigateToSettings("Réglages");
+    const select = screen.getByLabelText("Langue de l’interface");
+    const options = within(select).getAllByRole<HTMLOptionElement>("option");
+    expect(options).toHaveLength(26);
+    for (const { value } of options.filter(option => option.value !== "auto")) {
+      fireEvent.change(select, { target: { value } });
+      await waitFor(() => expect(document.documentElement.lang).toBe(value));
+      expect(screen.getByRole("heading", { name: t("Réglages") })).toBeInTheDocument();
+    }
+    fireEvent.change(select, { target: { value: "de" } });
+    expect(await screen.findByRole("heading", { name: "Einstellungen" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("de");
+    expect(localStorage.getItem("microwest-whisper:interface-language")).toBe("de");
+    first.unmount();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Audio" });
+    navigateToSettings("Einstellungen");
+    expect(screen.getByLabelText("Oberflächensprache")).toHaveValue("de");
+    fireEvent.change(screen.getByLabelText("Oberflächensprache"), { target: { value: "auto" } });
+    expect(await screen.findByRole("heading", { name: "Réglages" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("fr");
+  }, 20_000);
+
+  function navigateToSettings(name: string) {
+    fireEvent.click(screen.getAllByRole("button", { name })[0]);
+  }
 
   it("shows activation when required and allows model download without starting automatically", async () => {
     licenseValid = false; modelInstalled = false;

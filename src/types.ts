@@ -14,7 +14,6 @@ export interface LicenseCheck {
 export interface EngineStatus {
   backend: string;
   engine_root: string;
-  whisper_cli: string;
   ffmpeg: string;
   model_path: string;
   default_model: string;
