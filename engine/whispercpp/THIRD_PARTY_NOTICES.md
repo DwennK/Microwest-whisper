@@ -2,9 +2,9 @@
 
 The exact versions, download URLs, SHA-256 checksums and license identifiers used by the build are pinned in `native-dependencies.json`, which is bundled next to this notice.
 
-## whisper.cpp v1.9.4 — MIT
+## whisper.cpp v1.9.6 — MIT
 
-Source: https://github.com/ggml-org/whisper.cpp/tree/v1.9.4
+Source: https://github.com/ggml-org/whisper.cpp/tree/v1.9.6
 
 Copyright (c) 2023-2026 The ggml authors
 
@@ -14,9 +14,9 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## imageio-ffmpeg 0.6.0 — BSD-2-Clause
+## imageio-ffmpeg 0.8.1 — BSD-2-Clause
 
-Source: https://github.com/imageio/imageio-ffmpeg/tree/v0.6.0
+Source: https://github.com/imageio/imageio-ffmpeg/tree/v0.8.1
 
 Copyright (c) 2019-2025, imageio
 
@@ -37,3 +37,12 @@ The FFmpeg executable distributed by the pinned imageio-ffmpeg wheels is a separ
 - FFmpeg source: https://github.com/FFmpeg/FFmpeg
 
 FFmpeg can include additional libraries whose notices and corresponding-source obligations depend on its build configuration. Before public commercial distribution, archive the full `ffmpeg -version` configuration for every target and complete a legal review of those transitive codecs. This notice records the pinned build inputs; it is not legal advice.
+
+## Parakeet Ultra and sherpa-onnx
+
+Parakeet Ultra by Moondream uses further training of NVIDIA Parakeet TDT 0.6B v3. The application downloads the sherpa-onnx project's INT8 ONNX conversion. Both the original and adapted model are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+- [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+- [Moondream Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra)
+- [Quantized model and vocabulary](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8/tree/402e1190ce85b9793118ee223db21fb0d12f52db)
+- [sherpa-onnx 2.0.3](https://github.com/k2-fsa/sherpa-onnx/tree/v2.0.3), Apache License 2.0, and [ONNX Runtime](https://github.com/microsoft/onnxruntime), MIT. Their license texts accompany this notice.

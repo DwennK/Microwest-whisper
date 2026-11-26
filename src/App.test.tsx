@@ -60,7 +60,7 @@ describe("App", () => {
           whisper_cli: "/engine/whisper-cli",
           ffmpeg: "/engine/ffmpeg",
           model_path: "/models/model.bin",
-          default_model: "large-v3-turbo-q8_0",
+          default_model: "parakeet-ultra-int8",
           default_output_dir: "/output",
           default_work_dir: "/work",
           platform: "macos",
@@ -83,6 +83,17 @@ describe("App", () => {
           models_dir: "/models",
           total_downloaded_bytes: 874_188_075,
           models: [
+            {
+              id: "parakeet-ultra-int8",
+              label: "Parakeet Ultra · INT8",
+              filename: "parakeet-ultra-int8",
+              url: "https://example.test/model.bin",
+              size_bytes: 670_576_835,
+              size_label: "640 Mio",
+              installed: modelInstalled,
+              path: "/models/model.bin",
+              source: "downloaded",
+            },
             {
               id: "large-v3-turbo-q8_0",
               label: "large-v3-turbo q8_0",
@@ -194,7 +205,7 @@ describe("App", () => {
     const start = screen.getByRole("button", { name: "Transcrire" });
     fireEvent.click(start); fireEvent.click(start);
     await waitFor(() => expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "start_transcription")).toHaveLength(1));
-    expect(invokeMock).toHaveBeenCalledWith("start_transcription", { request: expect.objectContaining({ language: "fr", model: "large-v3-turbo-q8_0", audio_path: "/audio/meeting.wav" }) });
+    expect(invokeMock).toHaveBeenCalledWith("start_transcription", { request: expect.objectContaining({ language: "auto", model: "parakeet-ultra-int8", device: "cpu", audio_path: "/audio/meeting.wav" }) });
     navigate("Audio");
     expect(screen.getByRole("button", { name: "Changer de fichier" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Changer le dossier" })).toBeDisabled();
@@ -207,6 +218,8 @@ describe("App", () => {
     render(<App />);
     await chooseFile();
     fireEvent.click(within(screen.getByRole("navigation", { name: "Application" })).getByRole("button", { name: "Réglages" }));
+    expect(screen.getByLabelText("Langue")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Modèle"), { target: { value: "large-v3-turbo-q8_0" } });
     fireEvent.change(screen.getByLabelText("Langue"), { target: { value: "en" } });
     fireEvent.change(screen.getByLabelText("Calcul"), { target: { value: "cpu" } });
     fireEvent.click(screen.getByRole("button", { name: "Retour au fichier" }));
@@ -222,7 +235,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Activer" }));
     await chooseFileWithoutReady();
     expect(screen.getByRole("button", { name: "Transcrire" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /Télécharger · 834 MiB/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Télécharger · 640 Mio/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Transcrire" })).toBeEnabled());
     expect(invokeMock.mock.calls.some(([cmd]) => cmd === "start_transcription")).toBe(false);
   });

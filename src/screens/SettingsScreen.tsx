@@ -1,6 +1,6 @@
 import { Download, FolderOpen, History, Loader2, Play, Settings2, Trash2 } from "lucide-react";
 import { NumberField, SectionTitle, Select, Toggle } from "../components/ui";
-import { audioFilterOptions, deviceOptions, languageOptions, modelOptions, languageLabel, modelLabel, audioFilterLabel, deviceLabel, type TranscriptionSettings } from "../lib/preferences";
+import { parakeetModel, backendLabel, audioFilterOptions, deviceOptions, languageOptions, modelOptions, languageLabel, modelLabel, audioFilterLabel, deviceLabel, type TranscriptionSettings } from "../lib/preferences";
 import type { EngineStatus, ModelInfo, ModelInventory } from "../types";
 
 interface SettingsScreenProps {
@@ -42,6 +42,7 @@ export function SettingsScreen({
   onBack,
   locked,
 }: SettingsScreenProps) {
+  const useParakeet = settings.model === parakeetModel;
   return (
     <section className="screen settings-screen">
       <div className="settings-intro"><p>Ces réglages sont conservés pour vos prochaines transcriptions.</p><button type="button" onClick={onBack}>Retour au fichier</button></div>
@@ -53,13 +54,14 @@ export function SettingsScreen({
           <Select label="Modèle" value={settings.model} onChange={(model) => onSettingsChange({ ...settings, model })} options={[...modelOptions]} optionLabel={modelLabel} />
           <Select
             label="Langue"
-            value={settings.language}
+            disabled={useParakeet}
+            value={useParakeet ? "auto" : settings.language}
             onChange={(language) => onSettingsChange({ ...settings, language })}
             options={[...languageOptions]} optionLabel={languageLabel}
           />
           <Select label="Filtre audio" value={settings.audio_filter} onChange={(audio_filter) => onSettingsChange({ ...settings, audio_filter })} options={[...audioFilterOptions]} optionLabel={audioFilterLabel} />
           <NumberField label="Cœurs de calcul (0 = automatique)" value={settings.threads} min={0} max={64} onChange={(threads) => onSettingsChange({ ...settings, threads })} />
-          <Select label="Calcul" value={settings.device} onChange={(device) => onSettingsChange({ ...settings, device })} options={[...deviceOptions]} optionLabel={deviceLabel} />
+          <Select label="Calcul" disabled={useParakeet} value={useParakeet ? "cpu" : settings.device} onChange={(device) => onSettingsChange({ ...settings, device })} options={[...deviceOptions]} optionLabel={deviceLabel} />
         </div>
         <div className="toggle-grid">
           <Toggle label="Réduire les silences" checked={settings.trim_silence} onChange={(trim_silence) => onSettingsChange({ ...settings, trim_silence })} />
@@ -85,7 +87,7 @@ export function SettingsScreen({
         <dl className="details engine-details">
           <div>
             <dt>Moteur</dt>
-            <dd>{engine?.backend ?? "whisper.cpp"}</dd>
+            <dd>{backendLabel(settings.model)}</dd>
           </div>
           <div>
             <dt>Plateforme</dt>

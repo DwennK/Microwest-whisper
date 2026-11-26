@@ -1,5 +1,7 @@
 # Backend whisper.cpp
 
+Ce document décrit le moteur Whisper optionnel. Parakeet Ultra est le modèle par défaut. Voir le [README](../README.md) pour sa configuration.
+
 ## Etat livre
 
 - Tauri appelle un backend Rust natif, sans moteur Python.

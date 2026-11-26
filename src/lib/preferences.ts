@@ -2,13 +2,14 @@ import type { TranscriptionRequest } from "../types";
 
 export type TranscriptionSettings = Omit<TranscriptionRequest, "audio_path" | "output_dir">;
 
-export const modelOptions = ["large-v3-turbo-q8_0", "large-v3-turbo-q5_0"] as const;
+export const parakeetModel = "parakeet-ultra-int8";
+export const modelOptions = [parakeetModel, "large-v3-turbo-q8_0", "large-v3-turbo-q5_0"] as const;
 export const languageOptions = ["auto", "fr", "en", "de", "it", "es", "pt", "nl", "pl", "uk", "ar", "zh", "ja", "ko"] as const;
 export const audioFilterOptions = ["loudnorm", "voice-clean", "none"] as const;
 export const deviceOptions = ["auto", "cpu"] as const;
 
 export const defaultTranscriptionSettings: TranscriptionSettings = {
-  model: "large-v3-turbo-q8_0",
+  model: parakeetModel,
   language: "fr",
   audio_filter: "loudnorm",
   threads: 0,
@@ -17,7 +18,8 @@ export const defaultTranscriptionSettings: TranscriptionSettings = {
   force: false,
 };
 
-const SETTINGS_KEY = "microwest-whisper:transcription-settings:v1";
+const LEGACY_SETTINGS_KEY = "microwest-whisper:transcription-settings:v1";
+const SETTINGS_KEY = "microwest-whisper:transcription-settings:v2";
 const OUTPUT_DIRECTORY_KEY = "microwest-whisper:output-directory:v1";
 
 interface StorageReader {
@@ -49,16 +51,20 @@ export function loadTranscriptionSettings(storage: StorageReader | null = browse
   if (!storage) return defaultTranscriptionSettings;
 
   try {
-    const value = JSON.parse(storage.getItem(SETTINGS_KEY) ?? "null") as unknown;
+    const current = storage.getItem(SETTINGS_KEY);
+    const value = JSON.parse(current ?? storage.getItem(LEGACY_SETTINGS_KEY) ?? "null") as unknown;
     if (!isRecord(value)) return defaultTranscriptionSettings;
 
     const threads = typeof value.threads === "number" && Number.isInteger(value.threads) && value.threads >= 0 && value.threads <= 64
       ? value.threads
       : defaultTranscriptionSettings.threads;
 
+    const language = optionValue(value.language, languageOptions, "fr");
+    const savedModel = optionValue(value.model, modelOptions, parakeetModel);
+    const migrateToUltra = current === null && !["ar", "zh", "ja", "ko"].includes(language);
     return {
-      model: optionValue(value.model, modelOptions, modelOptions[0]),
-      language: optionValue(value.language, languageOptions, languageOptions[1]),
+      model: migrateToUltra ? parakeetModel : savedModel,
+      language,
       audio_filter: optionValue(value.audio_filter, audioFilterOptions, audioFilterOptions[0]),
       threads,
       device: optionValue(value.device, deviceOptions, deviceOptions[0]),
@@ -108,7 +114,12 @@ const languageLabels: Record<string, string> = {
   uk: "Ukrainien", ar: "Arabe", zh: "Chinois", ja: "Japonais", ko: "Coréen",
 };
 export const languageLabel = (value: string) => languageLabels[value] ?? value;
-export const modelLabel = (value: string) => value === "large-v3-turbo-q8_0"
-  ? "Whisper large v3 turbo · Q8" : value === "large-v3-turbo-q5_0" ? "Whisper large v3 turbo · Q5" : value;
+export const backendLabel = (model: string) => model === parakeetModel ? "sherpa-onnx" : "whisper.cpp";
+const modelLabels: Record<string, string> = {
+  [parakeetModel]: "Parakeet Ultra · INT8",
+  "large-v3-turbo-q8_0": "Whisper large v3 turbo · Q8",
+  "large-v3-turbo-q5_0": "Whisper large v3 turbo · Q5",
+};
+export const modelLabel = (value: string) => modelLabels[value] ?? value;
 export const audioFilterLabel = (value: string) => ({ loudnorm: "Normaliser le volume", "voice-clean": "Nettoyer la voix", none: "Aucun filtre" })[value] ?? value;
 export const deviceLabel = (value: string) => value === "auto" ? "Automatique" : "Processeur uniquement";

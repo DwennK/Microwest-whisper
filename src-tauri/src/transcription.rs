@@ -1,4 +1,5 @@
 mod exports;
+mod parakeet;
 
 use crate::{license, model_assets, paths};
 use chrono::{SecondsFormat, Utc};
@@ -8,7 +9,7 @@ use std::{
     env, fmt, fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -39,7 +40,6 @@ fn path_with_appended_extension(path: &Path, extension: &str) -> PathBuf {
 pub struct TranscriptionState {
     running: Arc<Mutex<bool>>,
     cancel_requested: Arc<AtomicBool>,
-    active_child: Arc<Mutex<Option<Child>>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -211,7 +211,7 @@ pub fn app_diagnostics(app: AppHandle) -> AppDiagnostics {
     AppDiagnostics {
         name: "Microwest Whisper".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        backend: BACKEND_NAME.to_string(),
+        backend: status.backend.clone(),
         platform: env::consts::OS.to_string(),
         architecture: env::consts::ARCH.to_string(),
         engine_root: status.engine_root,
@@ -504,11 +504,15 @@ pub fn start_transcription(
         if *running {
             return Err("Une transcription est déjà en cours.".to_string());
         }
+        state.cancel_requested.store(false, Ordering::SeqCst);
         *running = true;
     }
-    state.cancel_requested.store(false, Ordering::SeqCst);
 
     let status = build_engine_status(Some(&app));
+    if !model_assets::is_parakeet(&request.model) && !Path::new(&status.whisper_cli).is_file() {
+        set_running(&state, false)?;
+        return Err("Le programme whisper-cli est introuvable.".into());
+    }
     if !status.can_run {
         set_running(&state, false)?;
         return Err(status.message);
@@ -534,34 +538,19 @@ pub fn start_transcription(
             }
         }
         let _ = set_running_direct(&state_for_thread, false);
-        state_for_thread
-            .cancel_requested
-            .store(false, Ordering::SeqCst);
     });
 
     Ok(StartResponse { started: true })
 }
 
 #[tauri::command]
-pub fn cancel_transcription(
-    app: AppHandle,
-    state: State<TranscriptionState>,
-) -> Result<CancelResponse, String> {
-    if let Ok(running) = state.running.lock() {
-        if !*running {
-            return Ok(CancelResponse { cancelled: false });
-        }
+pub fn cancel_transcription(state: State<TranscriptionState>) -> Result<CancelResponse, String> {
+    let running = state.running.lock().map_err(|_| "État de la transcription indisponible.")?;
+    if !*running {
+        return Ok(CancelResponse { cancelled: false });
     }
     state.cancel_requested.store(true, Ordering::SeqCst);
-    let mut cancelled = false;
-    if let Ok(mut active_child) = state.active_child.lock() {
-        if let Some(child) = active_child.as_mut() {
-            let _ = child.kill();
-            cancelled = true;
-        }
-    }
-    emit_event(&app, "cancelled", "system", CANCELLED_MESSAGE, "Annulé", 0)?;
-    Ok(CancelResponse { cancelled })
+    Ok(CancelResponse { cancelled: true })
 }
 
 fn run_transcription(
@@ -608,7 +597,7 @@ fn run_transcription_inner(
             &events,
             "started",
             "system",
-            "Backend natif whisper.cpp initialisé.",
+            "Préparation de la transcription locale.",
             "Préparation",
             5,
         )?;
@@ -617,7 +606,7 @@ fn run_transcription_inner(
             model_assets::resolve_model_path(Path::new(&status.engine_root), &request.model);
         if !model_path.exists {
             return Err(format!(
-                "Modèle requis introuvable: {}. Téléchargez le modèle dans Réglages ou déposez un fichier GGML/GGUF dans le dossier modèles.",
+                "Modèle introuvable ou incomplet ({}). Téléchargez le modèle dans Réglages.",
                 model_path.path.to_string_lossy()
             )
             .into());
@@ -625,14 +614,18 @@ fn run_transcription_inner(
 
         prepare_wav(&events, &state, &paths, &request, Path::new(&status.ffmpeg))?;
         ensure_not_cancelled(&state)?;
-        let transcript = run_whisper_cpp(
-            &events,
-            &state,
-            &paths,
-            &request,
-            Path::new(&status.whisper_cli),
-            &model_path.path,
-        )?;
+        let transcript = if model_assets::is_parakeet(&request.model) {
+            parakeet::transcribe(&events, &state, &paths, &request, &model_path.path)?
+        } else {
+            run_whisper_cpp(
+                &events,
+                &state,
+                &paths,
+                &request,
+                Path::new(&status.whisper_cli),
+                &model_path.path,
+            )?
+        };
         ensure_not_cancelled(&state)?;
         emit_event_to(
             &events,
@@ -643,13 +636,7 @@ fn run_transcription_inner(
             92,
         )?;
         let outputs = exports::write_outputs(&paths.audio, &paths.output_dir, &transcript)?;
-        append_history(
-            &paths,
-            &request,
-            &outputs,
-            transcript.duration_seconds,
-            "success",
-        )?;
+        append_history(&paths, &outputs, &transcript, "success")?;
         cleanup_temporary_wav(&events, &paths)?;
 
         emit_event_to(
@@ -851,9 +838,8 @@ fn run_whisper_cpp(
 
 fn append_history(
     paths: &TranscriptionPaths,
-    request: &TranscriptionRequest,
     output_paths: &[PathBuf],
-    duration_seconds: Option<f64>,
+    transcript: &NativeTranscript,
     status: &str,
 ) -> Result<(), String> {
     let history = paths.output_dir.join(HISTORY_FILE_NAME);
@@ -871,10 +857,10 @@ fn append_history(
         "status": status,
         "source_audio": paths.audio.to_string_lossy(),
         "stem": paths::transcript_output_stem(&paths.audio),
-        "duration_seconds": duration_seconds,
-        "language": request.language,
-        "model": request.model,
-        "asr_backend": BACKEND_NAME,
+        "duration_seconds": transcript.duration_seconds,
+        "language": transcript.language,
+        "model": transcript.model,
+        "asr_backend": transcript.backend,
         "diarization": false,
         "outputs": output_paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
     });
@@ -915,55 +901,26 @@ fn run_logged_command(
     let stdout_handle = stdout.map(|stream| spawn_reader(events.clone(), "stdout", stream));
     let stderr_handle = stderr.map(|stream| spawn_reader(events.clone(), "stderr", stream));
 
-    {
-        let mut active_child = state
-            .active_child
-            .lock()
-            .map_err(|_| "Etat process indisponible.".to_string())?;
-        *active_child = Some(child);
-    }
-
     let timeout = command_timeout();
     let started_at = Instant::now();
-    let status = loop {
-        ensure_not_cancelled(state)?;
-        {
-            let mut active_child = state
-                .active_child
-                .lock()
-                .map_err(|_| "Etat process indisponible.".to_string())?;
-            let Some(child) = active_child.as_mut() else {
-                return Err("Process externe interrompu.".to_string());
-            };
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    *active_child = None;
-                    break status;
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    let _ = child.kill();
-                    *active_child = None;
-                    return Err(format!("{failure_context}: {error}"));
-                }
-            }
+    let result = loop {
+        if let Err(error) = ensure_not_cancelled(state) {
+            break Err(error);
         }
-
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {}
+            Err(error) => break Err(format!("{failure_context}: {error}")),
+        }
         if started_at.elapsed() > timeout {
-            if let Ok(mut active_child) = state.active_child.lock() {
-                if let Some(child) = active_child.as_mut() {
-                    let _ = child.kill();
-                }
-                *active_child = None;
-            }
-            return Err(format!(
-                "{failure_context}: délai dépassé après {}.",
-                format_duration_human(timeout)
-            ));
+            break Err(format!("{failure_context}: délai dépassé après {}.", format_duration_human(timeout)));
         }
         thread::sleep(Duration::from_millis(200));
     };
-
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
     if let Some(handle) = stdout_handle {
         let _ = handle.join();
     }
@@ -971,6 +928,7 @@ fn run_logged_command(
         let _ = handle.join();
     }
 
+    let status = result?;
     if status.success() {
         Ok(())
     } else {
@@ -1168,18 +1126,15 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
     let default_work_dir = paths::default_work_dir(&data_root);
     let whisper_cli = find_whisper_cli(&engine_root);
     let ffmpeg = find_ffmpeg(&engine_root);
-    let model_path = model_assets::resolve_status_model_path(&engine_root);
+    let model_path = model_assets::resolve_model_path(&engine_root, model_assets::DEFAULT_MODEL);
 
     let mut missing = Vec::new();
-    if !whisper_cli.exists {
-        missing.push(format!("whisper-cli ({})", platform_tag()));
-    }
     if !ffmpeg.exists {
         missing.push(format!("FFmpeg ({})", platform_tag()));
     }
     let can_run = missing.is_empty();
     let message = if can_run && model_path.exists {
-        "Backend natif whisper.cpp prêt.".to_string()
+        "Parakeet Ultra est prêt.".to_string()
     } else if can_run {
         "Backend natif prêt. Téléchargez un modèle dans Réglages.".to_string()
     } else {
@@ -1190,7 +1145,7 @@ fn build_engine_status(app: Option<&AppHandle>) -> EngineStatus {
     };
 
     EngineStatus {
-        backend: BACKEND_NAME.to_string(),
+        backend: parakeet::BACKEND.to_string(),
         engine_root: engine_root.to_string_lossy().to_string(),
         whisper_cli: whisper_cli.path.to_string_lossy().to_string(),
         ffmpeg: ffmpeg.path.to_string_lossy().to_string(),
@@ -1403,7 +1358,7 @@ fn audio_preprocess_signature(request: &TranscriptionRequest) -> Value {
     json!({
         "version": 1,
         "audio_filter": request.audio_filter,
-        "trim_silence": request.trim_silence,
+        "trim_silence": request.trim_silence && !model_assets::is_parakeet(&request.model),
     })
 }
 
@@ -1453,7 +1408,7 @@ impl WavFreshness for PathBuf {
 
 fn build_audio_filter(request: &TranscriptionRequest) -> Option<String> {
     let mut filters = Vec::new();
-    if request.trim_silence {
+    if request.trim_silence && !model_assets::is_parakeet(&request.model) {
         filters.push("silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB");
     }
     match request.audio_filter.as_str() {
@@ -1727,6 +1682,58 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    #[ignore = "requires the installed Parakeet Ultra weights, FFmpeg and a speech recording"]
+    fn transcribes_with_parakeet_and_exports() {
+        let audio =
+            PathBuf::from(env::var_os("MICROWEST_TEST_AUDIO").expect("Set MICROWEST_TEST_AUDIO"));
+        let tmp = tempfile::tempdir().unwrap();
+        let request = TranscriptionRequest {
+            audio_path: audio.to_string_lossy().into_owned(),
+            output_dir: tmp.path().to_string_lossy().into_owned(),
+            work_dir: Some(tmp.path().join("work").to_string_lossy().into_owned()),
+            model: model_assets::DEFAULT_MODEL.into(),
+            language: "auto".into(),
+            audio_filter: "loudnorm".into(),
+            threads: 4,
+            device: "cpu".into(),
+            trim_silence: false,
+            force: false,
+        };
+        run_transcription_inner(
+            TranscriptionState::default(),
+            request,
+            build_engine_status(None),
+            Arc::new(|_, _, _, _, _| Ok(())),
+        )
+        .unwrap();
+        let stem = paths::transcript_output_stem(&audio);
+        let srt = fs::read_to_string(tmp.path().join(format!("{stem}.segments.srt"))).unwrap();
+        let segments = parse_srt_segments(&srt);
+        assert!(!segments.is_empty());
+        assert!(segments
+            .iter()
+            .all(|seg| !seg.text.is_empty() && seg.end > seg.start));
+        assert!(segments.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        assert!(tmp.path().join(format!("{stem}.transcript.docx")).is_file());
+        assert!(
+            fs::metadata(tmp.path().join(format!("{stem}.clean.txt")))
+                .unwrap()
+                .len()
+                > 0
+        );
+        let record: Value =
+            serde_json::from_str(&fs::read_to_string(tmp.path().join(HISTORY_FILE_NAME)).unwrap())
+                .unwrap();
+        assert_eq!(record["asr_backend"], parakeet::BACKEND);
+        assert_eq!(record["model"], model_assets::DEFAULT_MODEL);
+        println!(
+            "{} segments, {} words",
+            segments.len(),
+            transcript_text(&segments).split_whitespace().count()
+        );
+    }
 
     #[test]
     fn parses_whisper_cpp_json_transcription_shape() {

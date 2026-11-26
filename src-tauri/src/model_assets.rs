@@ -10,7 +10,8 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 
-pub const DEFAULT_MODEL: &str = "large-v3-turbo-q8_0";
+pub const DEFAULT_MODEL: &str = "parakeet-ultra-int8";
+const ULTRA_BASE_URL: &str = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8/resolve/402e1190ce85b9793118ee223db21fb0d12f52db";
 
 const MODEL_DIR_ENV: &str = "MICROWEST_MODEL_DIR";
 const MODEL_ENV: &str = "MICROWEST_WHISPER_MODEL";
@@ -23,17 +24,59 @@ struct ModelSpec {
     filename: &'static str,
     size_bytes: u64,
     size_label: &'static str,
+    files: &'static [ModelFile],
+}
+
+#[derive(Clone, Copy)]
+struct ModelFile {
+    name: &'static str,
+    bytes: u64,
     sha256: &'static str,
 }
 
+const PARAKEET: ModelSpec = ModelSpec {
+    id: DEFAULT_MODEL,
+    label: "Parakeet Ultra · INT8",
+    filename: DEFAULT_MODEL,
+    size_bytes: 670_576_835,
+    size_label: "640 Mio",
+    files: &[
+        ModelFile {
+            name: "encoder.int8.onnx",
+            bytes: 652_282_345,
+            sha256: "b43072e1b721f18a3df03fcfeb763ff7c4debdf29843598a3aba2f703e2780a3",
+        },
+        ModelFile {
+            name: "decoder.int8.onnx",
+            bytes: 11_845_274,
+            sha256: "1fab98fe6c12aded87d2da66272cc9e148d0a0044ce3850a12fe56302ec4a922",
+        },
+        ModelFile {
+            name: "joiner.int8.onnx",
+            bytes: 6_355_277,
+            sha256: "8a71aaccfdba3d451775507a889afd2257d2e754463fd81095a8c8f290f924c2",
+        },
+        ModelFile {
+            name: "tokens.txt",
+            bytes: 93_939,
+            sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+        },
+    ],
+};
+
 const MODEL_SPECS: &[ModelSpec] = &[
+    PARAKEET,
     ModelSpec {
         id: "large-v3-turbo-q8_0",
         label: "large-v3-turbo q8_0",
         filename: "ggml-large-v3-turbo-q8_0.bin",
         size_bytes: 874_188_075,
         size_label: "834 MiB",
-        sha256: "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+        files: &[ModelFile {
+            name: "ggml-large-v3-turbo-q8_0.bin",
+            bytes: 874_188_075,
+            sha256: "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+        }],
     },
     ModelSpec {
         id: "large-v3-turbo-q5_0",
@@ -41,7 +84,11 @@ const MODEL_SPECS: &[ModelSpec] = &[
         filename: "ggml-large-v3-turbo-q5_0.bin",
         size_bytes: 574_041_195,
         size_label: "547 MiB",
-        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        files: &[ModelFile {
+            name: "ggml-large-v3-turbo-q5_0.bin",
+            bytes: 574_041_195,
+            sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        }],
     },
 ];
 
@@ -92,7 +139,7 @@ pub fn model_status(engine_root: &Path) -> ModelInventory {
                 id: spec.id.to_string(),
                 label: spec.label.to_string(),
                 filename: spec.filename.to_string(),
-                url: model_url(spec),
+                url: format!("{}/{}", base_url(spec), spec.files[0].name),
                 size_bytes: spec.size_bytes,
                 size_label: spec.size_label.to_string(),
                 installed: resolved.exists,
@@ -118,138 +165,163 @@ pub async fn download_model(
     engine_root: &Path,
     model: &str,
 ) -> Result<ModelInventory, String> {
-    let spec = model_spec(model).ok_or_else(|| format!("Modèle inconnu: {model}"))?;
-    let models_dir = downloaded_models_dir();
-    fs::create_dir_all(&models_dir).map_err(|error| error.to_string())?;
-    let destination = models_dir.join(spec.filename);
+    install_model(
+        &downloaded_models_dir(),
+        model,
+        |kind, spec, downloaded, line, path| {
+            emit_download_event(app, kind, spec, downloaded, spec.size_bytes, line, path)
+        },
+    )
+    .await?;
+    Ok(model_status(engine_root))
+}
 
-    if destination.exists() && verify_model_file(&destination, spec)? {
-        emit_download_event(
-            app,
-            "completed",
-            spec,
-            spec.size_bytes,
-            spec.size_bytes,
-            &format!("Modèle déjà téléchargé: {}", destination.to_string_lossy()),
-            &destination,
-        )?;
-        return Ok(model_status(engine_root));
-    }
+fn model_lock(dir: &Path) -> Result<File, String> {
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(".install.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.try_lock()
+        .map_err(|_| "Une autre opération sur les modèles est en cours.".to_string())?;
+    Ok(lock)
+}
 
-    let partial = partial_model_path(&destination);
-    let _ = fs::remove_file(&partial);
-    let _ = fs::remove_file(&destination);
-
-    emit_download_event(
-        app,
+async fn install_model(
+    dir: &Path,
+    model: &str,
+    progress: impl Fn(&str, &ModelSpec, u64, &str, &Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let spec = model_spec(model).ok_or_else(|| format!("Modèle inconnu : {model}"))?;
+    let _lock = model_lock(dir)?;
+    let destination = dir.join(spec.filename);
+    let directory = if spec.id == DEFAULT_MODEL {
+        destination.as_path()
+    } else {
+        dir
+    };
+    fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    progress(
         "started",
         spec,
         0,
-        spec.size_bytes,
-        &format!("Téléchargement du modèle {}...", spec.label),
+        "Préparation du téléchargement…",
         &destination,
     )?;
-
-    let response = reqwest::Client::new()
-        .get(model_url(spec))
-        .header(
-            "User-Agent",
-            format!("MicrowestWhisper/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
-    let total = response.content_length().unwrap_or(spec.size_bytes);
-    let mut stream = response.bytes_stream();
-    let mut file = File::create(&partial).map_err(|error| error.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut downloaded = 0_u64;
-    let mut last_emit = Instant::now();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| error.to_string())?;
-        file.write_all(&chunk).map_err(|error| error.to_string())?;
-        hasher.update(&chunk);
-        downloaded += chunk.len() as u64;
-
-        if last_emit.elapsed() >= Duration::from_millis(250) || downloaded == total {
-            emit_download_event(
-                app,
-                "progress",
-                spec,
-                downloaded,
-                total,
-                &format!(
-                    "{} / {}",
-                    format_bytes(downloaded),
-                    format_bytes(total.max(spec.size_bytes))
-                ),
-                &destination,
-            )?;
-            last_emit = Instant::now();
+    let client = reqwest::Client::new();
+    let mut downloaded = 0;
+    for asset in spec.files {
+        let path = directory.join(asset.name);
+        if path.is_file() && verify_model_file(&path, asset)? {
+            downloaded += asset.bytes;
+            continue;
         }
+        let response = client
+            .get(format!("{}/{}", base_url(spec), asset.name))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        let mut stream = response.bytes_stream();
+        let mut partial = tempfile::NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
+        let mut digest = Sha256::new();
+        let mut received = 0;
+        let mut last_emit = Instant::now();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            received += chunk.len() as u64;
+            if received > asset.bytes {
+                return Err(format!("Taille inattendue pour {}.", asset.name));
+            }
+            partial.write_all(&chunk).map_err(|e| e.to_string())?;
+            digest.update(&chunk);
+            if last_emit.elapsed() >= Duration::from_millis(250) {
+                let total = downloaded + received;
+                progress(
+                    "progress",
+                    spec,
+                    total,
+                    &format!("{} / {}", format_bytes(total), spec.size_label),
+                    &destination,
+                )?;
+                last_emit = Instant::now();
+            }
+        }
+        if received != asset.bytes || hex::encode(digest.finalize()) != asset.sha256 {
+            return Err(format!(
+                "Le fichier {} est incomplet ou endommagé. Relancez le téléchargement.",
+                asset.name
+            ));
+        }
+        partial.persist(&path).map_err(|e| e.to_string())?;
+        downloaded += received;
     }
-    file.flush().map_err(|error| error.to_string())?;
-    drop(file);
-
-    if downloaded != spec.size_bytes {
-        let _ = fs::remove_file(&partial);
-        return Err(format!(
-            "Taille modèle invalide pour {}: {} reçu(s), {} attendu(s).",
-            spec.id, downloaded, spec.size_bytes
-        ));
-    }
-
-    let actual_hash = hex::encode(hasher.finalize());
-    if actual_hash != spec.sha256 {
-        let _ = fs::remove_file(&partial);
-        return Err(format!(
-            "Hash modèle invalide pour {}: {} reçu, {} attendu.",
-            spec.id, actual_hash, spec.sha256
-        ));
-    }
-
-    fs::rename(&partial, &destination).map_err(|error| error.to_string())?;
-    emit_download_event(
-        app,
+    progress(
         "completed",
         spec,
-        spec.size_bytes,
-        spec.size_bytes,
-        &format!("Modèle prêt: {}", destination.to_string_lossy()),
+        downloaded,
+        "Le modèle est prêt.",
         &destination,
-    )?;
-    Ok(model_status(engine_root))
+    )
+}
+
+fn base_url(spec: &ModelSpec) -> &'static str {
+    if spec.id == DEFAULT_MODEL {
+        ULTRA_BASE_URL
+    } else {
+        HF_BASE_URL
+    }
 }
 
 pub fn delete_downloaded_models(engine_root: &Path) -> Result<ModelInventory, String> {
-    let models_dir = downloaded_models_dir();
+    let dir = downloaded_models_dir();
+    let _lock = model_lock(&dir)?;
     for spec in MODEL_SPECS {
-        let destination = models_dir.join(spec.filename);
-        let partial = partial_model_path(&destination);
-        if destination.exists() {
-            fs::remove_file(&destination).map_err(|error| error.to_string())?;
-        }
-        if partial.exists() {
-            fs::remove_file(&partial).map_err(|error| error.to_string())?;
+        for path in installed_files(&dir, spec) {
+            if path.is_file() {
+                fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
         }
     }
-
-    if models_dir.exists()
-        && fs::read_dir(&models_dir)
-            .map_err(|error| error.to_string())?
-            .next()
-            .is_none()
-    {
-        let _ = fs::remove_dir(&models_dir);
-    }
-
+    let _ = fs::remove_dir(dir.join(DEFAULT_MODEL));
     Ok(model_status(engine_root))
 }
 
+fn installed_files(dir: &Path, spec: &ModelSpec) -> Vec<PathBuf> {
+    let dir = if spec.id == DEFAULT_MODEL {
+        dir.join(spec.filename)
+    } else {
+        dir.to_owned()
+    };
+    spec.files.iter().map(|file| dir.join(file.name)).collect()
+}
+
+fn ultra_ready(path: &Path) -> bool {
+    PARAKEET.files.iter().all(|file| {
+        path.join(file.name)
+            .metadata()
+            .is_ok_and(|m| m.is_file() && m.len() == file.bytes)
+    })
+}
+
 pub fn resolve_model_path(engine_root: &Path, requested: &str) -> ResolvedModelPath {
+    if is_parakeet(requested) {
+        let bundled = engine_root.join("models").join(DEFAULT_MODEL);
+        if ultra_ready(&bundled) {
+            return ResolvedModelPath {
+                path: bundled,
+                exists: true,
+            };
+        }
+        let path = downloaded_models_dir().join(DEFAULT_MODEL);
+        return ResolvedModelPath {
+            exists: ultra_ready(&path),
+            path,
+        };
+    }
     if let Ok(path) = env::var(MODEL_ENV) {
         let path = PathBuf::from(path);
         return ResolvedModelPath {
@@ -258,12 +330,7 @@ pub fn resolve_model_path(engine_root: &Path, requested: &str) -> ResolvedModelP
         };
     }
 
-    let requested = requested.trim();
-    let model_name = if requested.is_empty() || requested == "auto" {
-        DEFAULT_MODEL
-    } else {
-        requested
-    };
+    let model_name = requested.trim();
     let direct = PathBuf::from(model_name);
     if direct.is_absolute() || direct.components().count() > 1 {
         return ResolvedModelPath {
@@ -293,18 +360,8 @@ pub fn resolve_model_path(engine_root: &Path, requested: &str) -> ResolvedModelP
     }
 }
 
-pub fn resolve_status_model_path(engine_root: &Path) -> ResolvedModelPath {
-    let default = resolve_model_path(engine_root, DEFAULT_MODEL);
-    if default.exists {
-        return default;
-    }
-
-    let lighter = resolve_model_path(engine_root, "large-v3-turbo-q5_0");
-    if lighter.exists {
-        return lighter;
-    }
-
-    default
+pub fn is_parakeet(requested: &str) -> bool {
+    matches!(requested.trim(), "" | "auto" | DEFAULT_MODEL)
 }
 
 fn model_spec(model: &str) -> Option<&'static ModelSpec> {
@@ -313,11 +370,16 @@ fn model_spec(model: &str) -> Option<&'static ModelSpec> {
         .find(|spec| spec.id == model || spec.filename == model)
 }
 
-fn model_url(spec: &ModelSpec) -> String {
-    format!("{HF_BASE_URL}/{}", spec.filename)
-}
-
 fn model_source(engine_root: &Path, spec: &ModelSpec) -> String {
+    if spec.id == DEFAULT_MODEL {
+        if ultra_ready(&engine_root.join("models").join(DEFAULT_MODEL)) {
+            return "bundled".into();
+        }
+        if ultra_ready(&downloaded_model_path(spec)) {
+            return "downloaded".into();
+        }
+        return "missing".into();
+    }
     if env::var(MODEL_ENV).ok().is_some() {
         return "env".to_string();
     }
@@ -397,33 +459,23 @@ fn downloaded_model_path(spec: &ModelSpec) -> PathBuf {
     downloaded_models_dir().join(spec.filename)
 }
 
-fn partial_model_path(destination: &Path) -> PathBuf {
-    destination.with_file_name(format!(
-        "{}.part",
-        destination
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("model.bin")
-    ))
-}
-
 fn downloaded_models_size(models_dir: &Path) -> u64 {
     MODEL_SPECS
         .iter()
-        .map(|spec| models_dir.join(spec.filename))
+        .flat_map(|spec| installed_files(models_dir, spec))
         .filter_map(|path| path.metadata().ok().map(|metadata| metadata.len()))
         .sum()
 }
 
-fn verify_model_file(path: &Path, spec: &ModelSpec) -> Result<bool, String> {
+fn verify_model_file(path: &Path, spec: &ModelFile) -> Result<bool, String> {
     let metadata = path.metadata().map_err(|error| error.to_string())?;
-    if metadata.len() != spec.size_bytes {
+    if metadata.len() != spec.bytes {
         return Ok(false);
     }
 
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 64 * 1024];
     loop {
         let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
         if read == 0 {
@@ -467,4 +519,21 @@ fn emit_download_event(
 fn format_bytes(value: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;
     format!("{:.1} MiB", value as f64 / MIB)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "downloads and verifies the pinned model in the configured model directory"]
+    fn install_parakeet_for_local_run() {
+        tauri::async_runtime::block_on(install_model(
+            &downloaded_models_dir(),
+            DEFAULT_MODEL,
+            |_, _, _, _, _| Ok(()),
+        ))
+        .unwrap();
+        assert!(ultra_ready(&downloaded_models_dir().join(DEFAULT_MODEL)));
+    }
 }

@@ -41,6 +41,15 @@ describe("preferences", () => {
     });
   });
 
+  it("migrates older French settings to Ultra and keeps Whisper for Japanese", () => {
+    const legacyKey = "microwest-whisper:transcription-settings:v1";
+    const settings = { model: "large-v3-turbo-q8_0", threads: 6, language: "fr" };
+    expect(loadTranscriptionSettings(memoryStorage({ [legacyKey]: JSON.stringify(settings) })))
+      .toMatchObject({ model: "parakeet-ultra-int8", threads: 6 });
+    expect(loadTranscriptionSettings(memoryStorage({ [legacyKey]: JSON.stringify({ ...settings, language: "ja" }) })))
+      .toMatchObject({ model: settings.model, language: "ja" });
+  });
+
   it("falls back safely when persisted settings are malformed", () => {
     const storage = memoryStorage({ [preferenceStorageKeys.settings]: "not-json" });
     expect(loadTranscriptionSettings(storage)).toEqual(defaultTranscriptionSettings);

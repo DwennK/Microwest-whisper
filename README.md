@@ -1,15 +1,15 @@
 # Microwest Whisper
 
-Microwest Whisper est une application desktop Tauri/React qui transcrit des fichiers audio localement avec un backend natif `whisper.cpp`.
+Microwest Whisper est une application desktop Tauri/React qui transcrit des fichiers audio localement avec Parakeet Ultra par défaut. Whisper Turbo est également disponible dans les réglages.
 
 L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à installer Python, FFmpeg, Node, Whisper ou un token externe.
 
 ## Etat actuel
 
 - Application desktop Tauri v2 + React/Vite.
-- Backend natif Rust qui lance `whisper-cli`.
+- Parakeet Ultra fonctionne sur le processeur avec sherpa-onnx intégré à l’application.
 - Conversion audio via FFmpeg vers WAV PCM 16 kHz mono.
-- Modèles Whisper GGML téléchargés à la demande, hors Git.
+- Modèles de transcription téléchargés à la demande, hors Git.
 - Pas de diarisation ni de labels locuteur dans la version actuelle.
 - Licence IA Swiss conservée.
 - Auto-update manuel via GitHub Releases.
@@ -20,7 +20,7 @@ L'objectif produit est simple: l'utilisateur final installe l'app et n'a pas à 
 
 - Sélection d'un fichier audio et d'un dossier de sortie.
 - Validation et activation de licence IA Swiss.
-- Choix du modèle `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0`.
+- Choix entre Parakeet Ultra et les modèles Whisper `large-v3-turbo-q8_0` ou `large-v3-turbo-q5_0`.
 - Téléchargement et suppression des modèles depuis l'app.
 - Transcription locale avec segments horodatés.
 - Recherche dans la transcription, édition légère des segments et copie du texte.
@@ -43,7 +43,7 @@ src/                         Interface React/Vite
 src-tauri/                   Application Tauri et backend Rust
 src-tauri/src/license.rs     Licence IA Swiss
 src-tauri/src/transcription.rs
-                             Backend transcription whisper.cpp
+                             Transcription avec Parakeet Ultra ou Whisper
 engine/whispercpp/           Racine des binaires natifs et modèles locaux
 scripts/                     Préparation ressources et manifests release
 docs/                        Notes backend et updater
@@ -92,7 +92,13 @@ Choisir un fichier dans **Audio**, puis cliquer sur **Transcrire**. Les **Régla
 
 L’écran **Résultats** rassemble le lecteur, la recherche et la correction du texte. **Enregistrer les corrections** met à jour les fichiers complets ; **Exporter la sélection** génère des fichiers séparés pour les passages choisis. Changer de fichier ou de dossier avec des corrections en attente propose de les enregistrer, de les abandonner ou de rester.
 
-## Backend whisper.cpp
+## Transcription avec Parakeet Ultra
+
+Au premier usage, télécharger Parakeet Ultra depuis Audio ou Réglages (environ 640 Mio). Le modèle détecte automatiquement la langue et prend en charge 25 langues européennes, dont le français. Les enregistrements sont traités sur le processeur par passages de 22 secondes au maximum. Les coupures se font aux endroits les plus calmes et les sous-titres conservent les temps du fichier audio.
+
+Les préférences des versions précédentes passent à Ultra pour les langues prises en charge. Les utilisateurs ayant choisi l’arabe, le chinois, le japonais ou le coréen conservent Whisper. Le modèle reste modifiable dans Réglages.
+
+## Moteur Whisper optionnel
 
 En développement, l'app résout `whisper-cli`, FFmpeg et les modèles dans cet ordre:
 
@@ -126,6 +132,8 @@ Sur Windows, `whisper-cli.exe` doit être accompagné des DLLs `whisper.cpp`/GGM
 Les modèles ne sont pas commités dans Git.
 
 Modèles supportés:
+
+- Parakeet Ultra INT8 (par défaut) : trois fichiers ONNX et un vocabulaire, environ 640 Mio au total.
 
 - `large-v3-turbo-q8_0`: environ 834 MiB.
 - `large-v3-turbo-q5_0`: environ 547 MiB.
@@ -258,7 +266,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 npm run verify:native-manifest
 ```
 
-Le moteur whisper.cpp **1.9.4** est compilé depuis la même archive source vérifiée sur macOS, Windows et Linux. CMake et un compilateur C++ sont requis pour préparer les binaires (Xcode Command Line Tools sur macOS, Visual Studio C++ sur Windows, GCC/Clang sur Linux). Les bibliothèques whisper/ggml sont liées statiquement ; Metal reste activé sur macOS. FFmpeg reste fourni par imageio-ffmpeg 0.6.0, sa dernière version disponible.
+Le moteur whisper.cpp **1.9.6** est compilé depuis la même archive source vérifiée sur macOS, Windows et Linux. CMake et un compilateur C++ sont requis pour préparer les binaires (Xcode Command Line Tools sur macOS, Visual Studio C++ sur Windows, GCC/Clang sur Linux). Les bibliothèques whisper/ggml sont liées statiquement ; Metal reste activé sur macOS. FFmpeg reste fourni par imageio-ffmpeg 0.8.1.
 
 Les versions, URLs, SHA-256 et licences des archives `whisper.cpp` et imageio-ffmpeg sont verrouillés dans `scripts/native-dependencies.json`. Le téléchargement vérifie chaque hash avant extraction. Les notices sont intégrées aux ressources packagées via `engine/whispercpp/THIRD_PARTY_NOTICES.md` et la configuration de licence FFmpeg est archivée dans `FFMPEG_BUILD.txt` pour chaque plateforme.
 

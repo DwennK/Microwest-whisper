@@ -1,54 +1,48 @@
-# Dependency maintenance — 2026-09-15
+# Dependency maintenance — 2026-11-26
 
-## Updated
+## Versions
 
-- Frontend dependencies use current stable releases, including React 19.3.0,
-  Vite 8.3.0, Vitest 5.0.1, jsdom 30.0.1 and Tauri updater 2.11.0.
-- Cargo.lock refreshes compatible direct and transitive dependencies.
-  rustls 0.23.45 fixes RUSTSEC-2026-0285; chacha20 0.10.2 replaces a yanked release.
-- whisper.cpp 1.9.4 is compiled from its SHA-256-pinned source on a matching
-  macOS, Windows or Linux host. Metal is enabled on macOS. Native CPU tuning is
-  disabled to avoid baking the CI runner's CPU features into distributed binaries.
-- imageio-ffmpeg 0.6.0 remains the latest upstream package. Existing verified
-  archive hashes and FFmpeg license checks are preserved.
-- Node.js 24 remains the CI runtime. A newer non-LTS major is not required.
+- React 19.3.1, Vite 8.4.0, Vitest 5.1.2, jsdom 31.0.1 and jest-dom 8.0.0.
+- Tauri 2.12.7 (Rust), 2.12.5 (JavaScript API) and 2.12.6 (CLI). Both updater plugins use 2.14.1.
+- Parakeet Ultra INT8 runs with sherpa-onnx 2.0.3 linked into the Rust application.
+  The three ONNX files and vocabulary are pinned by revision, size and SHA-256 in `src-tauri/src/model_assets.rs`.
+- The Word exporter and the Tauri dependency tree now share zip 9.8.2.
+- whisper.cpp 1.9.6 builds from the source archive pinned in `scripts/native-dependencies.json`.
+  The manifest also records the five imageio-ffmpeg 0.8.1 wheels and their SHA-256 checksums.
+- CI uses Node.js 26 LTS and Python 3.15.
 
-Some transitive crates remain at versions explicitly pinned by their upstream
-parents (generic-array and the older TOML parsing stack). Cargo cannot upgrade
-these independently without changing the parent dependency constraints.
+## Audit
 
-## Audit boundaries
+npm audit and cargo audit reported no known vulnerabilities in the lockfiles.
+RustSec reports five unmaintained crates: chrono, proc-macro-error, zbus_names,
+zvariant and zvariant_derive. Each is already at the newest version allowed by its
+parent or by the application.
 
-`npm audit` reports zero known vulnerabilities. `cargo audit` reports zero
-vulnerability entries after the rustls update, but retains these upstream warnings:
-
-- RUSTSEC-2024-0429: glib 0.18.5 has an unsound iterator implementation.
-  Tauri's Linux GTK/WebKit dependency chain still requires glib 0.18;
-  the upstream fix is in glib 0.20 or later. Updating it independently would
-  require migrating the GTK dependency chain. This warning is not suppressed.
-- Six unmaintained dependency warnings: proc-macro-error and five unic crates.
-  These are transitive dependencies. No local fork or audit exclusion is added.
-
-A clean audit is not proof that every native library has no vulnerability.
-Existing installations receive these changes only after a new public release.
+RustSec also reports RUSTSEC-2024-0429 for glib 0.18.5 in Tauri's Linux GTK
+dependencies. The fix requires glib 0.20 or later. The current GTK dependency
+chain requires glib 0.18.
 
 ## Validation
 
-Run with Node.js 24:
+On Windows x64, 34 frontend tests, 21 Rust tests and 7 release tooling tests
+passed. FFmpeg converted a five-second audio sample to mono PCM at 16 kHz,
+and whisper.cpp transcribed it with the large-v3-turbo-q8_0 model.
+The Parakeet integration also transcribed a 133-second French recording and wrote
+SRT, TXT and DOCX exports.
+
+Run from the repository root with the platform build tools installed:
 
 ```sh
 npm ci
+npm outdated
+npm audit
 npm test
 npm run build:frontend
+node --test scripts/check-release.mjs
 npm run verify:native-manifest
+python3 scripts/fetch-whispercpp-binaries.py
+npm run prepare:whispercpp
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 cargo audit --file src-tauri/Cargo.lock
-python3 scripts/fetch-whispercpp-binaries.py
 npm run build
 ```
-
-Local validation: 13 frontend tests, 18 native tests (plus the subprocess helper),
-frontend compilation, the macOS application bundle and a real transcription of
-the upstream JFK sample using large-v3-turbo-q8_0 with Metal. GitHub Actions validates and
-builds the same commit on Linux, macOS and Windows. Public releases retain the
-existing certificate and notarization requirements.

@@ -2,23 +2,23 @@
   "manifest_version": 1,
   "components": {
     "whisper.cpp": {
-      "version": "v1.9.4",
+      "version": "v1.9.6",
       "license": {
         "spdx": "MIT",
-        "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/LICENSE"
+        "url": "https://github.com/ggml-org/whisper.cpp/blob/v1.9.6/LICENSE"
       },
       "artifacts": {
         "source": {
-          "url": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.4.tar.gz",
-          "sha256": "57e280cee375ab02425b806ad5146b99f6eb9357e3c2b31357c8a6af2e2e44ae"
+          "url": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.6.tar.gz",
+          "sha256": "7ab15dc88022d2425ad94dcffd8abbf1b6d7018089b4e48d6b40780738e0b445"
         }
       }
     },
     "imageio-ffmpeg": {
-      "version": "0.6.0",
+      "version": "0.8.1",
       "license": {
         "spdx": "BSD-2-Clause",
-        "url": "https://github.com/imageio/imageio-ffmpeg/blob/v0.6.0/LICENSE"
+        "url": "https://github.com/imageio/imageio-ffmpeg/blob/v0.8.1/LICENSE"
       },
       "bundled_binary_license": {
         "spdx": "GPL-2.0-or-later",
@@ -31,24 +31,24 @@
       },
       "artifacts": {
         "macos-aarch64": {
-          "url": "https://files.pythonhosted.org/packages/40/5c/f3d8a657d362cc93b81aab8feda487317da5b5d31c0e1fdfd5e986e55d17/imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742"
+          "url": "https://files.pythonhosted.org/packages/2b/47/9f9b654f853598bae0850fa22bba168103e45d31b5a2a893ed474f28d54a/imageio_ffmpeg-0.8.1-py3-none-macosx_12_0_arm64.whl",
+          "sha256": "5636d691e36e5274b13fe38182b1f627b2e35dcecc63944012c2470f9484fc45"
         },
         "macos-x86_64": {
-          "url": "https://files.pythonhosted.org/packages/da/58/87ef68ac83f4c7690961bce288fd8e382bc5f1513860fc7f90a9c1c1c6bf/imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl",
-          "sha256": "9d2baaf867088508d4a3458e61eeb30e945c4ad8016025545f66c4b5aaef0a61"
+          "url": "https://files.pythonhosted.org/packages/da/24/2c3a7c69453bfb8374ddbbb5007346bad4a4247bc86882f3521cd615f929/imageio_ffmpeg-0.8.1-py3-none-macosx_10_13_x86_64.whl",
+          "sha256": "9538a10e598257263b5de1a1c1b86e7603417bc219245b1e279b452e5e48cc20"
         },
         "windows-x86_64": {
-          "url": "https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl",
-          "sha256": "02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a"
+          "url": "https://files.pythonhosted.org/packages/82/0c/a1d49f3dd2688bd750b4986f8e271ad11f8e729a896070ea25f587b44da8/imageio_ffmpeg-0.8.1-py3-none-win_amd64.whl",
+          "sha256": "f27ca4cb85e2d4946deedbce1a81245dfd942a2bcf94b53676fb3956aa95bf1b"
         },
         "linux-x86_64": {
-          "url": "https://files.pythonhosted.org/packages/a0/2d/43c8522a2038e9d0e7dbdf3a61195ecc31ca576fb1527a528c877e87d973/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl",
-          "sha256": "c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282"
+          "url": "https://files.pythonhosted.org/packages/de/0f/49292fbef69ee10ebcf97bb741602521caafcc6966d5fa1a2b868cc15655/imageio_ffmpeg-0.8.1-py3-none-manylinux_2_28_x86_64.whl",
+          "sha256": "050d6850601c3b3890bd2b28306f3b842b3daea390a561101174375a1c460bda"
         },
         "linux-aarch64": {
-          "url": "https://files.pythonhosted.org/packages/33/e7/1925bfbc563c39c1d2e82501d8372734a5c725e53ac3b31b4c2d081e895b/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_aarch64.whl",
-          "sha256": "1d47bebd83d2c5fc770720d211855f208af8a596c82d17730aa51e815cdee6dc"
+          "url": "https://files.pythonhosted.org/packages/53/02/e139e53a71f33f728cb2ce6c1124edc29e4c008427923f01a4d37f9a1867/imageio_ffmpeg-0.8.1-py3-none-manylinux_2_28_aarch64.whl",
+          "sha256": "fad3176f859b25869e60a8ed79957d4e3ed74a97a95e5f0cdcb91455f6c6d00e"
         }
       }
     }

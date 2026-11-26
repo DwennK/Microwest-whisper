@@ -1,7 +1,7 @@
 import appIcon from "../../assets/app-icon-small.png";
 import { Cpu, FolderOpen, HardDrive, Info } from "lucide-react";
 import { SectionTitle } from "../components/ui";
-import { modelLabel } from "../lib/preferences";
+import { backendLabel, modelLabel } from "../lib/preferences";
 import { formatBytes } from "../lib/format";
 import type { AppDiagnostics, EngineStatus, ModelInfo, ModelInventory, LicenseSnapshot } from "../types";
 
@@ -41,7 +41,7 @@ export function AboutScreen({
           </div>
           <div>
             <dt>Moteur de transcription</dt>
-            <dd>{appInfo?.backend ?? engine?.backend ?? "whisper.cpp"}</dd>
+            <dd>{selectedModel ? backendLabel(selectedModel.id) : appInfo?.backend ?? engine?.backend ?? "détection…"}</dd>
           </div>
           <div>
             <dt>Modèle actif</dt>

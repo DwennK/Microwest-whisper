@@ -17,6 +17,7 @@ import { useTranscription } from "./hooks/useTranscription";
 import {
   loadOutputDirectory,
   loadTranscriptionSettings,
+  parakeetModel,
   saveOutputDirectory,
   saveTranscriptionSettings,
 } from "./lib/preferences";
@@ -59,6 +60,9 @@ function App() {
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [appInfo, setAppInfo] = useState<AppDiagnostics | null>(null);
   const [settings, setSettings] = useState(loadTranscriptionSettings);
+  const useParakeet = settings.model === parakeetModel;
+  const language = useParakeet ? "auto" : settings.language;
+  const device = useParakeet ? "cpu" : settings.device;
   const [audioSource, setAudioSource] = useState("");
   const [audioPlaybackMessage, setAudioPlaybackMessage] = useState("");
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -406,7 +410,7 @@ function App() {
 
   function startTranscription() {
     if (!canStart) return;
-    const request: TranscriptionRequest = { ...settings, audio_path: audioPath, output_dir: outputDir, work_dir: workDir };
+    const request: TranscriptionRequest = { ...settings, language, device, audio_path: audioPath, output_dir: outputDir, work_dir: workDir };
     requestChange(async () => {
       await transcription.startTranscription(request);
     });
@@ -502,7 +506,7 @@ function App() {
           onChooseAudio={chooseAudio}
           onChooseOutputDir={chooseOutputDir}
           onRevealAudio={handleRevealPath}
-          language={settings.language}
+          language={language}
           model={settings.model}
           selectedModel={selectedModel}
           modelReady={selectedModelReady}
