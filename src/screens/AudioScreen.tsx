@@ -1,5 +1,6 @@
 import { message, t } from "../lib/i18n";
-import { AudioLines, Download, FileAudio, FolderOpen, Loader2, Play, Settings2 } from "lucide-react";
+import { ArrowUp, AudioLines, Download, FileAudio, FolderOpen, Loader2, Minus, Play, Plus, Settings2 } from "lucide-react";
+import type { QueueItem } from "../hooks/useAudioQueue";
 import { SectionTitle } from "../components/ui";
 import { fileName } from "../lib/format";
 import { parakeetLabel } from "../lib/preferences";
@@ -18,6 +19,11 @@ interface AudioScreenProps {
   canStart: boolean;
   disabledReason: string;
   onChooseAudio: () => void;
+  queue: QueueItem[];
+  onAddAudio: () => void;
+  onMoveUp: (index: number) => void;
+  onRemove: (index: number) => void;
+  onReview: (path: string) => void;
   onChooseOutputDir: () => void;
   onRevealAudio: (path: string) => void;
   onSettings: () => void;
@@ -26,22 +32,34 @@ interface AudioScreenProps {
 }
 
 export function AudioScreen(props: AudioScreenProps) {
+  const queued = props.queue.length > 0;
+  const finished = queued && props.queue.every(item => item.status === "completed");
+  const labels = { pending: "En attente", running: "En cours", completed: "Terminé", failed: "Échec", cancelled: "Annulé" };
   return (
     <section className="screen audio-screen">
-      <p className="screen-intro">{t("Choisissez votre fichier. Vos réglages sont déjà prêts.")}</p>
+      <p className="screen-intro">{t("Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.")}</p>
       <div className="two-column audio-picker-grid">
         <div className="primary-panel">
-          <SectionTitle icon={<FileAudio size={20} />} title={t("Fichier audio")} />
-          <div className={props.audioPath ? "file-target has-file" : "file-target"}>
+          <SectionTitle icon={<FileAudio size={20} />} title={queued ? t("File d’attente") : t("Fichier audio")} />
+          {queued ? <ol className="audio-queue">
+            {props.queue.map((item, index) => <li key={item.path}>
+              <div><strong title={item.path}>{fileName(item.path)}</strong><small>{item.path}</small>
+                <span>{t(labels[item.status])}{item.error && " · " + message(item.error)}</span></div>
+              {item.status === "completed" && <button type="button" disabled={props.locked} onClick={() => props.onReview(item.path)}>{t("Lire")}</button>}
+              <button type="button" className="icon-button" disabled={props.locked || index === 0} aria-label={t("Monter {0}", fileName(item.path))} onClick={() => props.onMoveUp(index)}><ArrowUp size={15} /></button>
+              <button type="button" className="icon-button" disabled={props.locked} aria-label={t("Retirer {0}", fileName(item.path))} onClick={() => props.onRemove(index)}><Minus size={15} /></button>
+            </li>)}
+          </ol> : <div className={props.audioPath ? "file-target has-file" : "file-target"}>
             <div className="audio-file-symbol"><AudioLines size={36} strokeWidth={1.5} /></div>
             <strong>{props.audioPath ? fileName(props.audioPath) : t("Quel fichier souhaitez-vous transcrire ?")}</strong>
             <span title={props.audioPath}>{props.audioPath || "MP3, M4A, WAV, MP4, WebM, FLAC, OGG…"}</span>
-          </div>
+          </div>}
           <div className="action-row">
             <button className={props.audioPath ? "" : "primary"} type="button" disabled={props.locked} onClick={props.onChooseAudio}>
-              <FileAudio size={17} />{props.audioPath ? t("Changer de fichier") : t("Choisir un fichier")}
+              <FileAudio size={17} />{queued ? t("Remplacer la liste") : props.audioPath ? t("Changer de fichier") : t("Choisir des fichiers")}
             </button>
-            {props.audioPath && <button type="button" onClick={() => props.onRevealAudio(props.audioPath)}><FolderOpen size={17} />{t("Afficher")}</button>}
+            {props.audioPath && <button type="button" disabled={props.locked} onClick={props.onAddAudio}><Plus size={17} />{t("Ajouter des fichiers")}</button>}
+            {props.audioPath && !queued && <button type="button" onClick={() => props.onRevealAudio(props.audioPath)}><FolderOpen size={17} />{t("Afficher")}</button>}
           </div>
         </div>
         <div className="secondary-panel">
@@ -75,8 +93,8 @@ export function AudioScreen(props: AudioScreenProps) {
         </section>
       )}
       <footer className="screen-actions">
-        <div><strong>{props.canStart ? t("Prêt à transcrire") : t("Avant de commencer")}</strong>
-          <span>{props.canStart ? t("Vous pourrez écouter, corriger et exporter le résultat.") : message(props.disabledReason)}</span>
+        <div><strong>{finished ? t("Transcription terminée") : props.canStart ? t("Prêt à transcrire") : t("Avant de commencer")}</strong>
+          {!finished && <span>{props.canStart ? t("Vous pourrez écouter, corriger et exporter le résultat.") : message(props.disabledReason)}</span>}
         </div>
         <button className="primary continue-button" type="button" disabled={!props.canStart} onClick={props.onStart}><Play size={18} />{t("Transcrire")}</button>
       </footer>

@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Prekinjeno audio čitanje: {0}",
   "{0} s sur {1} s transcrites": "Transkribirane {0} s od {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Pripremam 16 kHz mono audio za transkripciju...",
-  "Réutilisation du fichier audio préparé : {0}": "Koristeći prethodno pripremljen audio: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Koristeći prethodno pripremljen audio: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Povucite snimke ovamo ili ih odaberite na računalu.",
+  "File d’attente": "Red čekanja",
+  "Monter {0}": "Pomakni {0} gore",
+  "Retirer {0}": "Ukloni {0}",
+  "Ajouter des fichiers": "Dodaj datoteke",
+  "Remplacer la liste": "Zamijeni popis",
+  "Choisir des fichiers": "Odaberi datoteke",
+  "Arrêter la file": "Zaustavi red čekanja"
 }

@@ -514,19 +514,14 @@ pub fn start_transcription(
 
     let state_for_thread = state.inner().clone();
     thread::spawn(move || {
-        if let Err(error) =
-            run_transcription(app.clone(), state_for_thread.clone(), request, status)
-        {
-            match error {
-                TranscriptionError::Cancelled => {
-                    let _ = emit_event(&app, "cancelled", "system", CANCELLED_MESSAGE, "Annulé", 0);
-                }
-                TranscriptionError::Failed(message) => {
-                    let _ = emit_event(&app, "failed", "system", &message, "Echec", 0);
-                }
-            }
-        }
+        let result = run_transcription(app.clone(), state_for_thread.clone(), request, status);
+        // A terminal event can immediately trigger the next file in the queue.
         let _ = set_running_direct(&state_for_thread, false);
+        let _ = match result {
+            Ok(()) => emit_event(&app, "completed", "system", "Process terminé.", "Terminé", 100),
+            Err(TranscriptionError::Cancelled) => emit_event(&app, "cancelled", "system", CANCELLED_MESSAGE, "Annulé", 0),
+            Err(TranscriptionError::Failed(reason)) => emit_event(&app, "failed", "system", &reason, "Échec", 0),
+        };
     });
 
     Ok(StartResponse { started: true })
@@ -616,14 +611,6 @@ fn run_transcription_inner(
         append_history(&paths, &outputs, &transcript, "success")?;
         cleanup_temporary_wav(&events, &paths)?;
 
-        emit_event_to(
-            &events,
-            "completed",
-            "system",
-            "Process terminé.",
-            "Terminé",
-            100,
-        )?;
         Ok(())
     })();
 
@@ -1329,24 +1316,31 @@ mod tests {
         let audio =
             PathBuf::from(env::var_os("MICROWEST_TEST_AUDIO").expect("Set MICROWEST_TEST_AUDIO"));
         let tmp = tempfile::tempdir().unwrap();
-        let request = TranscriptionRequest {
-            audio_path: audio.to_string_lossy().into_owned(),
-            output_dir: tmp.path().to_string_lossy().into_owned(),
-            work_dir: Some(tmp.path().join("work").to_string_lossy().into_owned()),
-            model: model_assets::DEFAULT_MODEL.into(),
-            audio_filter: "loudnorm".into(),
-            threads: 4,
-            trim_silence: false,
-            force: false,
-        };
-        run_transcription_inner(
-            TranscriptionState::default(),
-            request,
-            build_engine_status(None),
-            Arc::new(|_, _, _, _, _| Ok(())),
-        )
-        .unwrap();
+        let other_audio = tmp.path().join(audio.file_name().unwrap());
+        fs::copy(&audio, &other_audio).unwrap();
+        // Both recordings have the same name and share one output directory.
+        for source in [&audio, &other_audio] {
+            let request = TranscriptionRequest {
+                audio_path: source.to_string_lossy().into_owned(),
+                output_dir: tmp.path().to_string_lossy().into_owned(),
+                work_dir: Some(tmp.path().join("work").to_string_lossy().into_owned()),
+                model: model_assets::DEFAULT_MODEL.into(),
+                audio_filter: "loudnorm".into(),
+                threads: 4,
+                trim_silence: false,
+                force: false,
+            };
+            run_transcription_inner(
+                TranscriptionState::default(), request, build_engine_status(None),
+                Arc::new(|_, _, _, _, _| Ok(())),
+            ).unwrap();
+        }
         let stem = paths::transcript_output_stem(&audio);
+        let other_stem = paths::transcript_output_stem(&other_audio);
+        assert_ne!(stem, other_stem);
+        for suffix in ["clean.txt", "segments.srt", "transcript.docx"] {
+            assert!(tmp.path().join(format!("{other_stem}.{suffix}")).is_file());
+        }
         let srt = fs::read_to_string(tmp.path().join(format!("{stem}.segments.srt"))).unwrap();
         let segments = parse_srt_segments(&srt);
         assert!(!segments.is_empty());
@@ -1361,11 +1355,14 @@ mod tests {
                 .len()
                 > 0
         );
-        let record: Value =
-            serde_json::from_str(&fs::read_to_string(tmp.path().join(HISTORY_FILE_NAME)).unwrap())
-                .unwrap();
-        assert_eq!(record["asr_backend"], parakeet::BACKEND);
-        assert_eq!(record["model"], model_assets::DEFAULT_MODEL);
+        let history = fs::read_to_string(tmp.path().join(HISTORY_FILE_NAME)).unwrap();
+        assert_eq!(history.lines().count(), 2);
+        for (line, source) in history.lines().zip([audio, other_audio]) {
+            let record: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(record["source_audio"], source.to_string_lossy().as_ref());
+            assert_eq!(record["asr_backend"], parakeet::BACKEND);
+            assert_eq!(record["model"], model_assets::DEFAULT_MODEL);
+        }
         println!(
             "{} segments, {} words",
             segments.len(),

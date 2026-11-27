@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Leseafbrydelse: {0}",
   "{0} s sur {1} s transcrites": "Transkriberet {0} s af {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Forberedelse af 16 kHz mono lyd til transkription...",
-  "Réutilisation du fichier audio préparé : {0}": "Ved hjælp af forud forberedt lyd: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Ved hjælp af forud forberedt lyd: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Træk dine optagelser hertil, eller vælg dem på din computer.",
+  "File d’attente": "Kø",
+  "Monter {0}": "Flyt {0} op",
+  "Retirer {0}": "Fjern {0}",
+  "Ajouter des fichiers": "Tilføj filer",
+  "Remplacer la liste": "Erstat listen",
+  "Choisir des fichiers": "Vælg filer",
+  "Arrêter la file": "Stop køen"
 }

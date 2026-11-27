@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Lesen der Audiodatei unterbrochen: {0}",
   "{0} s sur {1} s transcrites": "Transkribiert {0} s von {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Mono-Audio mit 16 kHz wird für die Transkription vorbereitet…",
-  "Réutilisation du fichier audio préparé : {0}": "Vorbereitetes Audio: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Vorbereitetes Audio: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Ziehen Sie Ihre Aufnahmen hierher oder wählen Sie sie auf Ihrem Computer aus.",
+  "File d’attente": "Warteschlange",
+  "Monter {0}": "{0} nach oben verschieben",
+  "Retirer {0}": "{0} entfernen",
+  "Ajouter des fichiers": "Dateien hinzufügen",
+  "Remplacer la liste": "Liste ersetzen",
+  "Choisir des fichiers": "Dateien auswählen",
+  "Arrêter la file": "Warteschlange anhalten"
 }

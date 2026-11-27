@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Kuulutus katkestati: {0}",
   "{0} s sur {1} s transcrites": "Transkriptitud {0} s {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Valmistan 16 kHz monoaudiot transkriptsiooni jaoks...",
-  "Réutilisation du fichier audio préparé : {0}": "Kasutades eelnevalt valmistatud heli: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Kasutades eelnevalt valmistatud heli: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Lohistage salvestised siia või valige need arvutist.",
+  "File d’attente": "Järjekord",
+  "Monter {0}": "Liiguta {0} üles",
+  "Retirer {0}": "Eemalda {0}",
+  "Ajouter des fichiers": "Lisa faile",
+  "Remplacer la liste": "Asenda loend",
+  "Choisir des fichiers": "Vali failid",
+  "Arrêter la file": "Peata järjekord"
 }

@@ -58,10 +58,11 @@ export function ResultsScreen({
   const [mode, setMode] = useState<"read" | "edit" | "select">(hasSegmentEdits ? "edit" : "read");
   const [panel, setPanel] = useState<"files" | "selection" | "history" | null>(null);
   const [segmentSearch, setSegmentSearch] = useState("");
-  const [focusedSegment, setFocusedSegment] = useState<number | null>(null);
+  const [currentPassage, setCurrentPassage] = useState(-1);
   const [audioError, setAudioError] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const currentPassageRef = useRef<HTMLElement | null>(null);
   const debouncedSearch = useDebouncedValue(segmentSearch, 160);
   const filteredSegments = useMemo(() => segments.map((segment, index) => ({ segment, index }))
     .filter(({ segment }) => segment.text.toLocaleLowerCase().includes(debouncedSearch.trim().toLocaleLowerCase())), [debouncedSearch, segments]);
@@ -73,6 +74,11 @@ export function ResultsScreen({
   const selectedCount = selectedEditableSegments.length;
   const hiddenSelectedCount = selectedSegments.filter((index) => !visibleIndexes.includes(index)).length;
   const duration = segments[segments.length - 1]?.end ?? 0;
+
+  function syncPassage(audio: HTMLAudioElement) {
+    const time = audio.currentTime;
+    setCurrentPassage(audio.ended ? -1 : segments.findIndex(({ start, end }) => start <= time && time < end));
+  }
 
   async function playFrom(seconds: number) {
     const audio = audioRef.current;
@@ -87,7 +93,7 @@ export function ResultsScreen({
     if (!audio) return;
     audio.currentTime = Math.max(0, Math.min(audio.currentTime + delta, Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY));
   }
-  useEffect(() => { setAudioError(""); }, [audioSource]);
+  useEffect(() => { setAudioError(""); setCurrentPassage(-1); }, [audioSource]);
   useEffect(() => {
     function handleKeyboard(event: KeyboardEvent) {
       const target = event.target;
@@ -106,6 +112,17 @@ export function ResultsScreen({
     return () => window.removeEventListener("keydown", handleKeyboard);
   }, [panel]);
   useEffect(() => { listRef.current?.scrollTo?.({ top: 0 }); }, [debouncedSearch]);
+  useEffect(() => {
+    const list = listRef.current;
+    const passage = currentPassageRef.current;
+    if (!list || !passage || mode !== "read" || panel || segmentSearch || debouncedSearch) return;
+    const viewport = list.getBoundingClientRect();
+    const row = passage.getBoundingClientRect();
+    if (row.top < viewport.top || row.bottom > viewport.bottom) {
+      const inset = Math.max(0, (list.clientHeight - row.height) / 2);
+      list.scrollTo({ top: list.scrollTop + row.top - viewport.top - inset });
+    }
+  }, [currentPassage, mode, panel, segmentSearch, debouncedSearch]);
 
   function renderHistory() {
     return <div className="document-history">
@@ -148,7 +165,10 @@ export function ResultsScreen({
         {audioSource ? <>
           <button className="icon-button" type="button" aria-label={t("Reculer de 5 secondes")} title={t("Reculer de 5 secondes")} onClick={() => seekRelative(-5)}><Rewind size={17} /></button>
           <audio ref={audioRef} aria-label={t("Lecteur audio {0}", fileName(audioPath))} controls preload="metadata" src={audioSource}
-            onError={() => setAudioError("Ce format audio ne peut pas être lu directement. La transcription reste disponible.")} />
+            onPlay={event => syncPassage(event.currentTarget)} onTimeUpdate={event => syncPassage(event.currentTarget)}
+            onSeeked={event => syncPassage(event.currentTarget)} onEnded={() => setCurrentPassage(-1)}
+            onEmptied={() => setCurrentPassage(-1)}
+            onError={() => { setCurrentPassage(-1); setAudioError("Ce format audio ne peut pas être lu directement. La transcription reste disponible."); }} />
           <button className="icon-button" type="button" aria-label={t("Avancer de 5 secondes")} title={t("Avancer de 5 secondes")} onClick={() => seekRelative(5)}><FastForward size={17} /></button>
           <span className="listen-hint">{t("Cliquez sur un horaire pour écouter le passage")}</span>
         </> : <p className="muted">{message(audioPlaybackMessage) || t("Lecture audio indisponible pour ce fichier.")}</p>}
@@ -170,9 +190,11 @@ export function ResultsScreen({
       {segmentSearch && <div className="document-search-status" role="status">{t("Résultats : {0}", filteredSegments.length)}<button type="button" className="text-button" onClick={() => setSegmentSearch("")}>{t("Effacer la recherche")}</button></div>}
       <div className={`document-body mode-${mode}`} ref={listRef} tabIndex={0} aria-label={t("Texte de la transcription")}>
         {!filteredSegments.length && <p className="muted">{t("Aucun passage ne correspond à cette recherche.")}</p>}
-        {filteredSegments.map(({ segment, index }) => <article key={`${index}-${segment.start}`} className={`document-passage${focusedSegment === index ? " is-focused" : ""}${mode === "select" && selectedSegments.includes(index) ? " is-selected" : ""}`}>
+        {filteredSegments.map(({ segment, index }) => <article key={`${index}-${segment.start}`}
+          ref={index === currentPassage ? currentPassageRef : undefined} aria-current={index === currentPassage ? "time" : undefined}
+          className={`document-passage${mode === "select" && selectedSegments.includes(index) ? " is-selected" : ""}`}>
           {mode === "select" && <label className="segment-check" aria-label={t("Sélectionner le segment {0}", index + 1)}><input type="checkbox" checked={selectedSegments.includes(index)} onChange={() => onToggleSegment(index)} /><span /></label>}
-          <button type="button" className="timestamp-button" disabled={!audioSource} title={t("Écouter ce passage")} onClick={() => { setFocusedSegment(index); void playFrom(segment.start); }}>{formatSegmentTimestamp(segment.start)}</button>
+          <button type="button" className="timestamp-button" disabled={!audioSource} title={t("Écouter ce passage")} onClick={() => void playFrom(segment.start)}>{formatSegmentTimestamp(segment.start)}</button>
           {mode === "edit" ? <textarea aria-label={t("Texte du segment {0}", index + 1)} rows={Math.max(3, Math.ceil(segment.text.length / 85))} value={segment.text} onChange={(event) => onUpdateSegment(index, event.target.value)} /> : <p>{segment.text}</p>}
         </article>)}
       </div>

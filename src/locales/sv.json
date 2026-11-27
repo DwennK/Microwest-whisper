@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Avbruten ljudläsning: {0}",
   "{0} s sur {1} s transcrites": "Transkriberad {0} s av {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Förbereder 16 kHz mono ljud för transkription...",
-  "Réutilisation du fichier audio préparé : {0}": "Med hjälp av förberedd ljud: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Med hjälp av förberedd ljud: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Dra hit dina inspelningar eller välj dem på datorn.",
+  "File d’attente": "Kö",
+  "Monter {0}": "Flytta upp {0}",
+  "Retirer {0}": "Ta bort {0}",
+  "Ajouter des fichiers": "Lägg till filer",
+  "Remplacer la liste": "Ersätt listan",
+  "Choisir des fichiers": "Välj filer",
+  "Arrêter la file": "Stoppa kön"
 }

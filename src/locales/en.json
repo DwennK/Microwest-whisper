@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Audio reading interrupted: {0}",
   "{0} s sur {1} s transcrites": "Transcribed {0} s of {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Preparing 16 kHz mono audio for transcription…",
-  "Réutilisation du fichier audio préparé : {0}": "Using previously prepared audio: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Using previously prepared audio: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Drop your recordings here or choose them from your computer.",
+  "File d’attente": "Queue",
+  "Monter {0}": "Move {0} up",
+  "Retirer {0}": "Remove {0}",
+  "Ajouter des fichiers": "Add files",
+  "Remplacer la liste": "Replace list",
+  "Choisir des fichiers": "Choose files",
+  "Arrêter la file": "Stop queue"
 }

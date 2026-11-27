@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "A hangolvasás megszakadt: {0}",
   "{0} s sur {1} s transcrites": "Átírolt {0} s {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "16 kHz mono hang előkészítése a transzkripcióhoz...",
-  "Réutilisation du fichier audio préparé : {0}": "Előre elkészített hang felhasználásával: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Előre elkészített hang felhasználásával: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Húzza ide a felvételeket, vagy válassza ki őket a számítógépén.",
+  "File d’attente": "Várólista",
+  "Monter {0}": "{0} feljebb helyezése",
+  "Retirer {0}": "{0} eltávolítása",
+  "Ajouter des fichiers": "Fájlok hozzáadása",
+  "Remplacer la liste": "Lista lecserélése",
+  "Choisir des fichiers": "Fájlok kiválasztása",
+  "Arrêter la file": "Várólista leállítása"
 }

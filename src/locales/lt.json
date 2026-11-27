@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Audio skaitymo trukdymas: {0}",
   "{0} s sur {1} s transcrites": "Perrašyti {0} s iš {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "16 kHz mono garso paruošimas transkripcijai...",
-  "Réutilisation du fichier audio préparé : {0}": "Naudojant iš anksto paruoštą garso įrašą: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Naudojant iš anksto paruoštą garso įrašą: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Nuvilkite įrašus čia arba pasirinkite juos kompiuteryje.",
+  "File d’attente": "Eilė",
+  "Monter {0}": "Perkelti {0} aukštyn",
+  "Retirer {0}": "Pašalinti {0}",
+  "Ajouter des fichiers": "Pridėti failų",
+  "Remplacer la liste": "Pakeisti sąrašą",
+  "Choisir des fichiers": "Pasirinkti failus",
+  "Arrêter la file": "Sustabdyti eilę"
 }

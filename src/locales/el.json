@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Διακοπή ηχητικής ανάγνωσης: {0}",
   "{0} s sur {1} s transcrites": "Μεταγραφές {0} s από {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Προετοιμάζοντας 16 kHz μονοφωνικό για μεταγραφή...",
-  "Réutilisation du fichier audio préparé : {0}": "Χρησιμοποιώντας προετοιμασμένο ήχο: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Χρησιμοποιώντας προετοιμασμένο ήχο: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Σύρετε τις ηχογραφήσεις εδώ ή επιλέξτε τες από τον υπολογιστή σας.",
+  "File d’attente": "Ουρά",
+  "Monter {0}": "Μετακίνηση του {0} προς τα πάνω",
+  "Retirer {0}": "Αφαίρεση του {0}",
+  "Ajouter des fichiers": "Προσθήκη αρχείων",
+  "Remplacer la liste": "Αντικατάσταση λίστας",
+  "Choisir des fichiers": "Επιλογή αρχείων",
+  "Arrêter la file": "Διακοπή ουράς"
 }

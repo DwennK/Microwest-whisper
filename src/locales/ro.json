@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Citirea audio întreruptă: {0}",
   "{0} s sur {1} s transcrites": "Transcris {0} s din {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Pregătesc 16 kHz mono audio pentru transcriere...",
-  "Réutilisation du fichier audio préparé : {0}": "Folosind audio prealabil: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Folosind audio prealabil: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Trageți înregistrările aici sau alegeți-le de pe computer.",
+  "File d’attente": "Coadă de procesare",
+  "Monter {0}": "Mută {0} mai sus",
+  "Retirer {0}": "Elimină {0}",
+  "Ajouter des fichiers": "Adaugă fișiere",
+  "Remplacer la liste": "Înlocuiește lista",
+  "Choisir des fichiers": "Alege fișiere",
+  "Arrêter la file": "Oprește coada"
 }

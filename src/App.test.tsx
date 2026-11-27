@@ -157,12 +157,83 @@ describe("App", () => {
 
   async function chooseFile() {
     await screen.findByRole("heading", { name: "Audio" });
-    fireEvent.click(screen.getByRole("button", { name: "Choisir un fichier" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choisir des fichiers" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Transcrire" })).toBeEnabled());
   }
   function navigate(name: string) {
     fireEvent.click(within(screen.getByRole("navigation", { name: "Étapes de transcription" })).getByRole("button", { name: new RegExp(name) }));
   }
+
+  async function engineEnds(kind: "completed" | "failed" | "cancelled", line: string = kind) {
+    await act(async () => handlers.get("transcription-event")?.({ payload: { kind, line, stage: kind, progress: kind === "completed" ? 100 : 0 } }));
+  }
+
+  const launchedFiles = () => invokeMock.mock.calls.filter(([cmd]) => cmd === "start_transcription").map(([, args]) => args.request.audio_path);
+
+  it("queues dropped recordings in order, continues after a bad file and opens individual results", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Audio" });
+    await act(async () => handlers.get("tauri://drag-drop")?.({ payload: { paths: ["/a/intro.wav", "/b/intro.wav", "/a/intro.wav", "/a/image.jpg"] } }));
+    expect(await screen.findByText(/image.jpg/)).toBeInTheDocument();
+    openMock.mockResolvedValueOnce(["/a/last.mp3"]);
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter des fichiers" }));
+    await screen.findByText("last.mp3");
+    fireEvent.click(screen.getByRole("button", { name: "Monter last.mp3" }));
+    openMock.mockResolvedValueOnce("/exports");
+    fireEvent.click(screen.getByRole("button", { name: "Changer le dossier" }));
+    await screen.findByText("/exports");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Transcrire" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Transcrire" }));
+    await waitFor(() => expect(launchedFiles()).toEqual(["/a/intro.wav"]));
+    await engineEnds("failed", "Invalid recording");
+    expect(launchedFiles()).toEqual(["/a/intro.wav", "/a/last.mp3"]);
+    await engineEnds("completed");
+    expect(launchedFiles()).toEqual(["/a/intro.wav", "/a/last.mp3", "/b/intro.wav"]);
+    await engineEnds("completed");
+    expect(await screen.findByText(/Invalid recording/)).toBeInTheDocument();
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "start_transcription").every(([, args]) => args.request.output_dir === "/exports")).toBe(true);
+    const row = screen.getByText("/b/intro.wav").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Lire" }));
+    expect(await screen.findByRole("heading", { name: "Résultats" })).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("read_transcript_segments", { audioPath: "/b/intro.wav", outputDir: "/exports" });
+  });
+
+  it("stops the queue on cancellation and resumes unfinished files without repeating completed ones", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Audio" });
+    openMock.mockResolvedValueOnce(["/a/one.wav", "/a/two.wav", "/a/three.wav", "/a/remove.wav"]);
+    fireEvent.click(screen.getByRole("button", { name: "Choisir des fichiers" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retirer remove.wav" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Transcrire" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Transcrire" }));
+    await waitFor(() => expect(launchedFiles()).toHaveLength(1));
+    await engineEnds("completed");
+    expect(launchedFiles()).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Arrêter la file" }));
+    expect(invokeMock).toHaveBeenCalledWith("cancel_transcription");
+    await engineEnds("cancelled");
+    expect(launchedFiles()).toHaveLength(2);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Transcrire" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Transcrire" }));
+    await waitFor(() => expect(launchedFiles()).toEqual(["/a/one.wav", "/a/two.wav", "/a/two.wav"]));
+    await engineEnds("completed");
+    await engineEnds("completed");
+    expect(launchedFiles().at(-1)).toBe("/a/three.wav");
+    expect(await screen.findByRole("button", { name: "Transcrire" })).toBeDisabled();
+  });
+
+  it("keeps the remaining files pending when the engine rejects a launch", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Audio" });
+    openMock.mockResolvedValueOnce(["/a/one.wav", "/a/two.wav"]);
+    fireEvent.click(screen.getByRole("button", { name: "Choisir des fichiers" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Transcrire" })).toBeEnabled());
+    invokeMock.mockRejectedValueOnce(new Error("Licence requise"));
+    fireEvent.click(screen.getByRole("button", { name: "Transcrire" }));
+    expect(await screen.findByText(/Échec.*Licence requise/)).toBeInTheDocument();
+    expect(launchedFiles()).toEqual(["/a/one.wav"]);
+    expect(within(screen.getByText("/a/two.wav").closest("li")!).getByText("En attente")).toBeInTheDocument();
+  });
   async function editTranscript() {
     render(<App />);
     await chooseFile();
@@ -259,7 +330,7 @@ describe("App", () => {
 
   async function chooseFileWithoutReady() {
     await screen.findByRole("heading", { name: "Audio" });
-    fireEvent.click(screen.getByRole("button", { name: "Choisir un fichier" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choisir des fichiers" }));
     await screen.findByText("meeting.wav");
   }
 

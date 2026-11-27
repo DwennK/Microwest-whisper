@@ -135,6 +135,54 @@ describe("ResultsScreen", () => {
     expect(play).toHaveBeenCalledOnce();
   });
 
+  it("follows the audio clock across speech, silence, paused seeks and the end of playback", () => {
+    renderResults();
+    const audio = screen.getByLabelText("Lecteur audio meeting.wav") as HTMLAudioElement;
+    const [first, second] = screen.getAllByRole("article");
+    fireEvent.play(audio);
+    expect(first).toHaveAttribute("aria-current", "time");
+    audio.currentTime = segments[0].end;
+    fireEvent.timeUpdate(audio);
+    expect(screen.queryByRole("article", { current: "time" })).toBeNull();
+    audio.currentTime = segments[1].start;
+    fireEvent.timeUpdate(audio);
+    fireEvent.pause(audio);
+    expect(second).toHaveAttribute("aria-current", "time");
+    audio.currentTime = 0.5;
+    fireEvent.seeked(audio);
+    expect(first).toHaveAttribute("aria-current", "time");
+    expect(second).not.toHaveAttribute("aria-current");
+    fireEvent.ended(audio);
+    expect(screen.queryByRole("article", { current: "time" })).toBeNull();
+  });
+
+  it("scrolls only the transcript when a new passage is out of view in reading mode", () => {
+    renderResults();
+    const audio = screen.getByLabelText("Lecteur audio meeting.wav") as HTMLAudioElement;
+    const list = screen.getByLabelText("Texte de la transcription");
+    const [first, second] = screen.getAllByRole("article");
+    Object.defineProperty(list, "clientHeight", { value: 200 });
+    list.scrollTo = vi.fn();
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 500, 200));
+    vi.spyOn(first, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 110, 500, 40));
+    vi.spyOn(second, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 460, 500, 40));
+    fireEvent.play(audio);
+    expect(list.scrollTo).not.toHaveBeenCalled();
+    audio.currentTime = segments[1].start;
+    fireEvent.timeUpdate(audio);
+    expect(list.scrollTo).toHaveBeenCalledWith({ top: 280 });
+    audio.currentTime += 0.1;
+    fireEvent.timeUpdate(audio);
+    for (const mode of ["Corriger", "Sélectionner"]) {
+      fireEvent.click(screen.getByRole("button", { name: mode }));
+      audio.currentTime = 0;
+      fireEvent.seeked(audio);
+      audio.currentTime = segments[1].start;
+      fireEvent.timeUpdate(audio);
+    }
+    expect(list.scrollTo).toHaveBeenCalledTimes(1);
+  });
+
   it("supports keyboard seeking without intercepting editing, controls or dialogs", () => {
     renderResults();
     const audio = screen.getByLabelText("Lecteur audio meeting.wav") as HTMLAudioElement;

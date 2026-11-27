@@ -53,9 +53,13 @@ The interface follows your system language. To override it, open **Settings → 
 
 The app includes Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, and Ukrainian. English is used when none of the system languages is supported.
 
+## Transcribe several recordings
+
+To transcribe several recordings, drop them on **Audio** or use **Choose files**. Set one output folder, check the order in the queue, and click **Transcribe**. You can move a recording up or remove it before starting. Each finished recording has its own exports and a **Read** button. If a recording fails, its error appears beside the filename and the queue continues. **Stop queue** interrupts the current recording. Click **Transcribe** again in the same session to retry unfinished files.
+
 ## Review and export
 
-- **Check what you heard.** Search for a word, click its passage timestamp, and play the original recording. Use the space bar to pause and the arrow keys to move back or forward five seconds.
+- **Follow the recording.** In reading mode, the current passage is highlighted and scrolls into view as the audio plays. Click a timestamp to listen again. Use the space bar to pause and the arrow keys to move back or forward five seconds.
 - **Correct the transcript.** Choose **Edit** to edit a passage, then **Save edits** to update the full exports.
 - **Keep an excerpt.** Choose **Select**, check the passages you need, and click **Export selection**. The excerpt is saved separately from the full transcript.
 - **Reopen earlier work.** **History** lets you return to previous transcriptions in the current output folder.

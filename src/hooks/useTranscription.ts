@@ -12,6 +12,7 @@ interface UseTranscriptionOptions {
 export function useTranscription({ onStarted, onCompleted, onFailed }: UseTranscriptionOptions) {
   const [phase, setPhase] = useState<TranscriptionPhase>("idle");
   const locked = useRef(false);
+  const queueListener = useRef<((event: TranscriptionEvent) => void) | null>(null);
   const cancelPending = useRef(false);
   const [stage, setStage] = useState("En attente");
   const [progress, setProgress] = useState(0);
@@ -50,8 +51,11 @@ export function useTranscription({ onStarted, onCompleted, onFailed }: UseTransc
       if (event.kind === "completed") setProgress(100);
       setStartedAt(null);
       setLogLines((lines) => [...lines.slice(-250), event.line]);
-      if (event.kind === "completed") onCompleted();
-      if (event.kind === "failed") onFailed(event.line);
+      if (queueListener.current) {
+        queueListener.current(event);
+        queueListener.current = null;
+      } else if (event.kind === "completed") onCompleted();
+      else if (event.kind === "failed") onFailed(event.line);
       return;
     }
     if (!locked.current) return;
@@ -86,6 +90,17 @@ export function useTranscription({ onStarted, onCompleted, onFailed }: UseTransc
     }
   }, [onStarted]);
 
+  async function runQueuedFile(request: TranscriptionRequest) {
+    if (locked.current) throw new Error("Une transcription est déjà en cours.");
+    const finished = new Promise<TranscriptionEvent>(resolve => { queueListener.current = resolve; });
+    try {
+      await startTranscription(request);
+      return await finished;
+    } finally {
+      queueListener.current = null;
+    }
+  }
+
   const cancelTranscription = useCallback(async () => {
     if (!locked.current || cancelPending.current || phase === "starting") return;
     cancelPending.current = true;
@@ -110,5 +125,5 @@ export function useTranscription({ onStarted, onCompleted, onFailed }: UseTransc
     setShowLogs(false);
   }, []);
 
-  return { resetTranscription, phase, running, stage, progress, elapsedSeconds, estimatedRemaining, showLogs, setShowLogs, logLines, handleEngineEvent, startTranscription, cancelTranscription };
+  return { resetTranscription, phase, running, stage, progress, elapsedSeconds, estimatedRemaining, showLogs, setShowLogs, logLines, handleEngineEvent, startTranscription, runQueuedFile, cancelTranscription };
 }

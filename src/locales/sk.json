@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Audio čítanie prerušené: {0}",
   "{0} s sur {1} s transcrites": "Preložené {0} s z {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Pripravovanie 16 kHz monoaudio pre transkripciu...",
-  "Réutilisation du fichier audio préparé : {0}": "Použitie vopred pripraveného zvuku: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Použitie vopred pripraveného zvuku: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Presuňte sem nahrávky alebo ich vyberte v počítači.",
+  "File d’attente": "Front",
+  "Monter {0}": "Posunúť {0} nahor",
+  "Retirer {0}": "Odobrať {0}",
+  "Ajouter des fichiers": "Pridať súbory",
+  "Remplacer la liste": "Nahradiť zoznam",
+  "Choisir des fichiers": "Vybrať súbory",
+  "Arrêter la file": "Zastaviť front"
 }

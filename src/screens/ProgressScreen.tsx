@@ -6,6 +6,7 @@ import type { TranscriptionPhase } from "../hooks/useTranscription";
 interface StageStep { stage: string; min: number; }
 interface ProgressScreenProps {
   audioPath: string;
+  position?: string;
   phase: TranscriptionPhase;
   running: boolean;
   canStart: boolean;
@@ -31,7 +32,7 @@ export function ProgressScreen(props: ProgressScreenProps) {
       <div className="primary-panel">
         <div className={`progress-hero phase-${phase}`}>
         <div className={`progress-symbol${running ? " is-processing" : ""}`} aria-hidden="true">{phase === "completed" ? <Check size={32} /> : phase === "failed" ? <CircleX size={32} /> : <AudioLines size={32} />}</div>
-        <SectionTitle icon={<Play size={20} />} title={props.audioPath ? fileName(props.audioPath) : t("Votre transcription")} />
+        <SectionTitle icon={<Play size={20} />} title={props.audioPath ? [props.position, fileName(props.audioPath)].filter(Boolean).join(" · ") : t("Votre transcription")} />
         <div className="progress-head">
           <div role="status"><strong>{title}</strong>
             <span>{running ? [t("Temps écoulé : {0}", formatSegmentTimestamp(props.elapsedSeconds)), props.estimatedRemaining === null ? "" : t("Temps restant estimé : {0}", formatSegmentTimestamp(props.estimatedRemaining))].filter(Boolean).join(" · ") : phase === "completed" ? t("Le texte et les fichiers sont prêts à être ouverts.") : phase === "cancelled" ? t("Vous pouvez relancer ou choisir un autre fichier.") : phase === "failed" ? t("Consultez le message d’erreur avant de réessayer.") : t("Choisissez un fichier, puis lancez la transcription.")}</span>
@@ -44,7 +45,7 @@ export function ProgressScreen(props: ProgressScreenProps) {
           <p>{running ? t("Vous pouvez laisser cette fenêtre ouverte pendant le traitement.") : phase === "completed" ? t("Votre transcription est prête.") : t("Le traitement reste sur votre ordinateur.")}</p>
           <div className="action-row compact-actions">
             {running ? <button type="button" disabled={phase === "starting" || phase === "cancelling"} onClick={props.onCancel}>
-              {phase === "cancelling" ? <Loader2 className="spin" size={17} /> : <CircleStop size={17} />}{t("Annuler")}
+              {phase === "cancelling" ? <Loader2 className="spin" size={17} /> : <CircleStop size={17} />}{props.position ? t("Arrêter la file") : t("Annuler")}
             </button> : phase === "completed" ? <button className="primary" type="button" onClick={props.onResults}>{t("Voir les résultats")}</button> : <button className="primary" type="button" disabled={!props.canStart} onClick={props.onStart}><Play size={17} />{phase === "idle" ? t("Transcrire") : t("Relancer")}</button>}
           </div>
         </div>

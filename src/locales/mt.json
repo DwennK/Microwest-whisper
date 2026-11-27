@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "L- oqra tal- awdjo interrotta: {0}",
   "{0} s sur {1} s transcrites": "Ttrasskritt {0} s ta' {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Nippreparaw awdjo mono 16 kHz għat-traskrizzjoni...",
-  "Réutilisation du fichier audio préparé : {0}": "L-użu ta' awdju ippreparat minn qabel: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "L-użu ta' awdju ippreparat minn qabel: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Iddreggja r-reġistrazzjonijiet hawn jew agħżilhom mill-kompjuter tiegħek.",
+  "File d’attente": "Kju",
+  "Monter {0}": "Mexxi {0} ’il fuq",
+  "Retirer {0}": "Neħħi {0}",
+  "Ajouter des fichiers": "Żid fajls",
+  "Remplacer la liste": "Ibdel il-lista",
+  "Choisir des fichiers": "Agħżel fajls",
+  "Arrêter la file": "Waqqaf il-kju"
 }

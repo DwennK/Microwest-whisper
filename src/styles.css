@@ -127,6 +127,12 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .audio-file-symbol { display: grid; place-items: center; width: 66px; height: 66px; border-radius: 21px; background: linear-gradient(140deg,#e8f5ef,#d6eae1); color: #417969; box-shadow: inset 0 1px #fff, 0 5px 10px #3f78620a; margin-bottom: 5px; }
 .has-file .audio-file-symbol { color: #24695f; background: #d9eee4; }
 .audio-picker-grid .primary-panel > .action-row { justify-content: center; margin-top: 16px; }
+.audio-queue { margin: 14px 0 0; padding: 0; list-style: none; max-height: 290px; overflow-y: auto; counter-reset: recording; }
+.audio-queue li { display: flex; align-items: center; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--line); counter-increment: recording; }
+.audio-queue li::before { content: counter(recording); min-width: 2ch; color: var(--muted); font-variant-numeric: tabular-nums; }
+.audio-queue li > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.audio-queue strong, .audio-queue small, .audio-queue span { overflow-wrap: anywhere; }
+.audio-queue small, .audio-queue span { color: var(--muted); font-size: 12px; }
 .file-target.compact { align-items: flex-start; text-align: left; min-height: 0; padding: 0; gap: 8px; width: 100%; margin-bottom: 22px; }
 .file-target.compact strong { font-size: 18px; }
 .file-target.compact span { white-space: normal; overflow-wrap: anywhere; line-height: 1.7; font-size: 11px; }
@@ -254,7 +260,8 @@ button.text-button { border-color: transparent; color: var(--accent); background
 .document-passage p { margin: 3px 0 0; font-size: 16px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
 .document-passage .timestamp-button { border: 0; background: transparent; color: #60736a; padding: 0 4px; margin-top: 2px; min-height: 30px; font-size: 11px; }
 .document-passage .timestamp-button:hover:not(:disabled) { color: var(--accent); background: #e7f2eb; }
-.document-passage.is-focused { background: #edf6f0; }
+.document-passage[aria-current="time"] { background: #edf6f0; box-shadow: inset 3px 0 var(--accent); }
+.document-passage[aria-current="time"] .timestamp-button { color: var(--accent); font-weight: 700; }
 .document-passage textarea { width: 100%; min-height: 100px; resize: vertical; padding: 10px 12px; border: 1px solid #dbe5e1; border-radius: 6px; font: inherit; font-size: 15px; line-height: 1.7; color: inherit; background: #fff; }
 .mode-select .document-passage { grid-template-columns: 24px 80px minmax(0, 1fr); gap: 12px; padding-inline: 10px; border-bottom-color: #edf1f3; }
 .document-passage.is-selected { background: #eaf4ec; }

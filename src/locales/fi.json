@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Kuuntelu keskeytettiin: {0}",
   "{0} s sur {1} s transcrites": "Siirretty {0} s {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Valmistelen 16 kHz:n mono äänen transkriptiota varten...",
-  "Réutilisation du fichier audio préparé : {0}": "Käyttämällä aikaisemmin valmistettua ääntä: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Käyttämällä aikaisemmin valmistettua ääntä: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Vedä tallenteet tähän tai valitse ne tietokoneelta.",
+  "File d’attente": "Jono",
+  "Monter {0}": "Siirrä {0} ylöspäin",
+  "Retirer {0}": "Poista {0} jonosta",
+  "Ajouter des fichiers": "Lisää tiedostoja",
+  "Remplacer la liste": "Korvaa luettelo",
+  "Choisir des fichiers": "Valitse tiedostot",
+  "Arrêter la file": "Pysäytä jono"
 }

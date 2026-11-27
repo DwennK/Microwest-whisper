@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Audio-lezing onderbroken: {0}",
   "{0} s sur {1} s transcrites": "Verplaatst {0} s van {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Voorbereiding van 16 kHz mono-audio voor transcriptie...",
-  "Réutilisation du fichier audio préparé : {0}": "Met behulp van vooraf bereid geluid: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Met behulp van vooraf bereid geluid: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Sleep je opnamen hierheen of kies ze op je computer.",
+  "File d’attente": "Wachtrij",
+  "Monter {0}": "{0} omhoog verplaatsen",
+  "Retirer {0}": "{0} verwijderen",
+  "Ajouter des fichiers": "Bestanden toevoegen",
+  "Remplacer la liste": "Lijst vervangen",
+  "Choisir des fichiers": "Bestanden kiezen",
+  "Arrêter la file": "Wachtrij stoppen"
 }

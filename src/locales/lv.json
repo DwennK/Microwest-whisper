@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Skaņas skaitīšana pārtraukta: {0}",
   "{0} s sur {1} s transcrites": "Transkriptēti {0} s no {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "16 kHz monoaudio sagatavošana transkripcijai...",
-  "Réutilisation du fichier audio préparé : {0}": "Izmantojot iepriekš sagatavotus audio: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Izmantojot iepriekš sagatavotus audio: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Ievelciet ierakstus šeit vai izvēlieties tos datorā.",
+  "File d’attente": "Rinda",
+  "Monter {0}": "Pārvietot {0} uz augšu",
+  "Retirer {0}": "Noņemt {0}",
+  "Ajouter des fichiers": "Pievienot failus",
+  "Remplacer la liste": "Aizstāt sarakstu",
+  "Choisir des fichiers": "Izvēlēties failus",
+  "Arrêter la file": "Apturēt rindu"
 }

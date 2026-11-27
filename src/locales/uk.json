@@ -321,5 +321,13 @@
   "Lecture audio interrompue : {0}": "Перерване звукове читання: {0}",
   "{0} s sur {1} s transcrites": "Переписано {0} s з {1} s",
   "Préparation du fichier audio mono à 16 kHz…": "Підготую 16 кГц моно аудіо для транскрипції...",
-  "Réutilisation du fichier audio préparé : {0}": "Використовуючи попередньо підготовлений аудіо: {0}"
+  "Réutilisation du fichier audio préparé : {0}": "Використовуючи попередньо підготовлений аудіо: {0}",
+  "Déposez vos enregistrements ici ou choisissez-les sur votre ordinateur.": "Перетягніть записи сюди або виберіть їх на комп’ютері.",
+  "File d’attente": "Черга",
+  "Monter {0}": "Перемістити {0} вище",
+  "Retirer {0}": "Прибрати {0}",
+  "Ajouter des fichiers": "Додати файли",
+  "Remplacer la liste": "Замінити список",
+  "Choisir des fichiers": "Вибрати файли",
+  "Arrêter la file": "Зупинити чергу"
 }

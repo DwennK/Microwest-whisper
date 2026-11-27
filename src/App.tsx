@@ -15,6 +15,8 @@ import { useLicense } from "./hooks/useLicense";
 import { useModels } from "./hooks/useModels";
 import { useOutputs } from "./hooks/useOutputs";
 import { useTranscription } from "./hooks/useTranscription";
+import { pendingFile, useAudioQueue } from "./hooks/useAudioQueue";
+import { fileName } from "./lib/format";
 import {
   loadOutputDirectory,
   loadTranscriptionSettings,
@@ -67,6 +69,7 @@ function App() {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateMessage, setUpdateMessage] = useState("");
   const [error, setError] = useState("");
+  const queue = useAudioQueue();
 
   const {
     license,
@@ -125,8 +128,8 @@ function App() {
   } = useOutputs();
 
   const handleTranscriptionStarted = useCallback(() => {
-    setActiveStep(3);
-  }, []);
+    if (!queue.active.current) setActiveStep(3);
+  }, [queue.active]);
 
   const handleRefreshOutputs = useCallback(async (audio = audioPath, dir = outputDir) => {
     try {
@@ -156,7 +159,10 @@ function App() {
     onFailed: setError,
   });
 
-  const canStart = Boolean(engine?.can_run && selectedModelReady && licenseOk && audioPath && outputDir && !transcription.running && !modelBusy && !loading && !outputBusy && !booting && eventsReady && !changeBusy);
+  const processing = transcription.running || queue.running;
+  const queueDone = queue.items.length > 0 && queue.items.every(item => item.status === "completed");
+  const currentQueueIndex = queue.items.findIndex(item => item.status === "running");
+  const canStart = Boolean(engine?.can_run && selectedModelReady && licenseOk && audioPath && outputDir && !processing && !queueDone && !modelBusy && !loading && !outputBusy && !booting && eventsReady && !changeBusy);
   const startDisabledReason = (() => {
     if (booting) return "Préparation de l’application…";
     if (!eventsReady) return "Connexion au suivi du traitement…";
@@ -167,7 +173,8 @@ function App() {
     if (!engine?.can_run) return engine?.message ?? "Moteur incomplet.";
     if (!audioPath) return "Choisissez un fichier audio.";
     if (!outputDir) return "Choisissez un dossier de sortie.";
-    if (transcription.running) return "Transcription déjà en cours.";
+    if (processing) return "Transcription déjà en cours.";
+    if (queueDone) return "Transcription terminée";
     if (modelBusy) return "Téléchargement de modèle en cours.";
     return "";
   })();
@@ -270,7 +277,7 @@ function App() {
     hydrateModels(modelState);
   }, [hydrateModels]);
 
-  const controlsLocked = transcription.running || outputBusy || changeBusy || loading;
+  const controlsLocked = processing || outputBusy || changeBusy || loading;
 
   async function runChange(action: () => void | Promise<void>, save = false) {
     if (changeLock.current) return;
@@ -302,11 +309,58 @@ function App() {
     await Promise.all([refreshOutputs(audio, dir), handleRefreshHistory(dir)]);
   }
 
-  async function chooseAudio() {
+  function selectFiles(paths: string[], append: boolean) {
+    if (controlsLocked || queue.active.current || pendingChange) return;
+    const files = append ? [...(queue.items.length ? queue.items : audioPath ? [pendingFile(audioPath)] : [])] : [];
+    const initialLength = files.length;
+    const rejected: string[] = [];
+    const identity = (path: string) => engine?.platform === "windows" ? path.replaceAll("/", "\\").toLowerCase() : path;
+    const seen = new Set(files.map(item => identity(item.path)));
+    for (const path of paths) {
+      const name = fileName(path);
+      if (!name.includes(".") || !audioExtensions.includes(name.slice(name.lastIndexOf(".") + 1).toLowerCase())) {
+        rejected.push(name);
+        continue;
+      }
+      if (seen.has(identity(path))) continue;
+      seen.add(identity(path));
+      files.push(pendingFile(path));
+    }
+    const warning = rejected.length ? `Format audio non pris en charge: ${rejected.join(", ")}` : "";
+    if (files.length === initialLength) {
+      if (warning) setError(warning);
+      return;
+    }
+    if (files[0].path === audioPath || (append && initialLength > 0)) {
+      queue.setItems(files.length > 1 ? files : []);
+      setError(warning);
+      return;
+    }
+    requestChange(async () => {
+      queue.setItems(files.length > 1 ? files : []);
+      await replaceSource(files[0].path, outputDir);
+      if (warning) setError(warning);
+    });
+  }
+
+  const dropFiles = useRef((_: string[]) => {});
+  useEffect(() => {
+    dropFiles.current = paths => { if (activeStep === 1 && !booting) selectFiles(paths, true); };
+  });
+  useEffect(() => {
+    let disposed = false;
+    const registration = listen<{ paths: string[] }>("tauri://drag-drop", event => {
+      if (!disposed) dropFiles.current(event.payload.paths);
+    }, { target: { kind: "Webview", label: "main" } });
+    void registration.catch(error => { if (!disposed) setError(String(error)); });
+    return () => { disposed = true; void registration.then(stop => stop(), () => {}); };
+  }, []);
+
+  async function chooseAudio(append = false) {
     if (controlsLocked) return;
     try {
-      const selected = await openDialog({ multiple: false, filters: [{ name: t("Audio"), extensions: audioExtensions }] });
-      if (typeof selected === "string" && selected !== audioPath) requestChange(() => replaceSource(selected, outputDir));
+      const selected = await openDialog({ multiple: true, filters: [{ name: t("Audio"), extensions: audioExtensions }] });
+      if (selected) selectFiles(typeof selected === "string" ? [selected] : selected, append);
     } catch (error) { setError(`Sélection impossible : ${String(error)}`); }
   }
 
@@ -314,7 +368,10 @@ function App() {
     if (controlsLocked) return;
     try {
       const selected = await openDialog({ directory: true, multiple: false });
-      if (typeof selected === "string" && selected !== outputDir) requestChange(() => replaceSource(audioPath, selected));
+      if (typeof selected === "string" && selected !== outputDir) requestChange(async () => {
+        queue.setItems(current => current.map(item => pendingFile(item.path)));
+        await replaceSource(audioPath, selected);
+      });
     } catch (error) { setError(`Sélection impossible : ${String(error)}`); }
   }
 
@@ -338,7 +395,7 @@ function App() {
   }
 
   async function handleDownloadSelectedModel() {
-    if (transcription.running || modelBusy) return;
+    if (processing || modelBusy) return;
     setError("");
     try {
       await downloadSelectedModel();
@@ -349,7 +406,7 @@ function App() {
   }
 
   async function handleDeleteModels() {
-    if (transcription.running || modelBusy) return;
+    if (processing || modelBusy) return;
     setError("");
     try {
       await deleteModels();
@@ -410,14 +467,21 @@ function App() {
     if (!canStart) return;
     const request: TranscriptionRequest = { ...settings, audio_path: audioPath, output_dir: outputDir, work_dir: workDir };
     requestChange(async () => {
-      await transcription.startTranscription(request);
+      if (!queue.items.length) return transcription.startTranscription(request);
+      setActiveStep(3);
+      void queue.run(request, transcription.runQueuedFile).then(async () => {
+        setActiveStep(1);
+        await Promise.all([handleRefreshHistory(outputDir), handleRefreshOutputs(audioPath, outputDir)]);
+      });
     });
   }
 
   async function cancelTranscription() {
+    if (queue.active.current) queue.stopRequested.current = true;
     try {
       await transcription.cancelTranscription();
     } catch (cancelError) {
+      queue.stopRequested.current = false;
       setError(String(cancelError));
     }
   }
@@ -501,7 +565,23 @@ function App() {
           audioPath={audioPath}
           outputDir={outputDir}
           engine={engine}
-          onChooseAudio={chooseAudio}
+          onChooseAudio={() => void chooseAudio()}
+          onAddAudio={() => void chooseAudio(true)}
+          queue={queue.items}
+          onMoveUp={index => queue.setItems(current => {
+            const reordered = [...current];
+            [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+            return reordered;
+          })}
+          onRemove={index => requestChange(async () => {
+            const remaining = queue.items.filter((_, i) => i !== index);
+            queue.setItems(remaining);
+            if (queue.items[index].path === audioPath) await replaceSource(remaining[0]?.path ?? "", outputDir);
+          })}
+          onReview={path => requestChange(async () => {
+            await replaceSource(path, outputDir);
+            setActiveStep(4);
+          })}
           onChooseOutputDir={chooseOutputDir}
           onRevealAudio={handleRevealPath}
           selectedModel={selectedModel}
@@ -533,7 +613,7 @@ function App() {
           selectedModelReady={selectedModelReady}
           canStart={canStart}
           startDisabledReason={startDisabledReason}
-          locked={transcription.running || modelBusy}
+          locked={processing || modelBusy}
           onBack={() => navigateToStep(1)}
           onSettingsChange={setSettings}
           onDownloadModel={handleDownloadSelectedModel}
@@ -547,9 +627,10 @@ function App() {
     if (activeStep === 3) {
       return (
         <ProgressScreen
-          audioPath={audioPath}
+          audioPath={queue.items[currentQueueIndex]?.path ?? audioPath}
+          position={currentQueueIndex >= 0 ? `${currentQueueIndex + 1} / ${queue.items.length}` : undefined}
           phase={transcription.phase}
-          running={transcription.running}
+          running={processing}
           canStart={canStart}
           disabledReason={startDisabledReason}
           stage={transcription.stage}
@@ -574,7 +655,7 @@ function App() {
       return (
         <ResultsScreen
           key={`${audioPath}|${outputDir}`}
-          busy={outputBusy || transcription.running || changeBusy}
+          busy={outputBusy || processing || changeBusy}
           resultError={error}
           audioPath={audioPath}
           audioSource={audioSource}
@@ -600,7 +681,10 @@ function App() {
           onUpdateSegment={updateSegment}
           onAudio={() => navigateToStep(1)}
           onLoadHistoryRecord={(sourceAudio, dir) => {
-            if (sourceAudio !== audioPath || dir !== outputDir) requestChange(() => replaceSource(sourceAudio, dir));
+            if (sourceAudio !== audioPath || dir !== outputDir) requestChange(async () => {
+              queue.setItems([]);
+              await replaceSource(sourceAudio, dir);
+            });
           }}
         />
       );
@@ -670,7 +754,7 @@ function App() {
           <div className="status-area">
             <div className="status-strip">
               <StatusPill ok={licenseOk} label={license?.state.development_mode === true ? t("Mode développement") : licenseOk ? t("Licence active") : t("Licence requise")} />
-              <button className="update-button" type="button" disabled={updateBusy || transcription.running || outputBusy || loading || changeBusy || hasSegmentEdits} onClick={checkForUpdates}>
+              <button className="update-button" type="button" disabled={updateBusy || processing || outputBusy || loading || changeBusy || hasSegmentEdits} onClick={checkForUpdates}>
                 {updateBusy ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
                 {t("Mise à jour")}
               </button>
